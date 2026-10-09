@@ -102,14 +102,11 @@ CLAUDE_API_KEY = "sk-ant-sua-chave-aqui"
 ## ✨ Passo 5: Usar o App!
 
 1. **Clique no link** do seu app: `https://automacao-sei-sigef.streamlit.app`
-2. **Preencha os dados** do processo:
-   - Número do processo
-   - Data da NF-e
-   - CNPJ do fornecedor
-   - Valor
-   - Número do empenho
+2. **Envie os arquivos** do processo:
+   - PDF do processo (no SEI: "Gerar Arquivo PDF do Processo")
+   - XML da NF-e (opcional)
 3. **Clique em** "🔍 Analisar Processo"
-4. **Aguarde 3-5 segundos**
+4. **Aguarde 1-3 minutos**
 5. **Veja o resultado!**
 
 ---
@@ -152,7 +149,7 @@ Se você quer adicionar novos recursos:
 
 - **GitHub**: Grátis
 - **Streamlit Cloud**: Grátis (1 app)
-- **Claude API**: ~R$ 1-2/mês com análises regulares
+- **Claude API**: cobrado por análise (o custo aparece na tela)
 - **Total**: Praticamente GRÁTIS! 🚀
 
 ---

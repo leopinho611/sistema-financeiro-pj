@@ -6,19 +6,21 @@
 
 ## 🎯 O que faz?
 
-Automatiza a análise de processos de liquidação de despesa:
+Automatiza a conferência de processos de liquidação de despesa da SESAP/RN:
 
 ```
-Você insere dados do processo
+Você envia o PDF do processo (gerado no SEI) + XML da NF-e (opcional)
   ↓
-Claude analisa os documentos
+O app separa as páginas relevantes (modo econômico)
+  ↓
+Claude localiza NF, Empenho, Atesto, Visto e Despacho Diligencial
+e faz as conferências cruzadas (CNPJ, valores, objeto, datas, assinaturas)
   ↓
 Sistema recomenda: APROVADO / DEVOLVIDO / PENDENTE
+(com página de cada documento e texto sugerido para devolução)
   ↓
 Você faz a conferência final
 ```
-
-**Resultado**: O que levava 30-40 minutos agora leva **3-5 minutos** ⚡
 
 ---
 
@@ -60,36 +62,22 @@ CLAUDE_API_KEY = "sk-ant-xxxxxxxxxxxxx"
 ### 5. Usar!
 
 - Acesse `https://seu-app.streamlit.app`
-- Insira os dados do processo
-- Clique em "Analisar"
+- Envie o PDF do processo e o XML da NF-e
+- Clique em "Analisar Processo"
 - Pronto! ✅
 
 ---
 
 ## 📊 Exemplo de Análise
 
-**Entrada:**
-```
-Processo: 00610029.010710/2026-06
-NF-e: 23/09/2026
-CNPJ: 61.703.774/0001-73
-Valor: R$ 12.300,00
-Empenho: 2026NE005156
-```
+**Entrada:** `processo.pdf` (processo inteiro gerado no SEI) + `nfe.xml`
 
 **Saída:**
-```json
-{
-  "status": "APROVADO",
-  "validacoes": {
-    "dados_coerentes": true,
-    "documentacao_completa": true,
-    "sem_riscos": true
-  },
-  "recomendacao": "Processo apto para emissão de CE e NL",
-  "riscos": []
-}
-```
+- Status: ✅ APROVADO / ❌ DEVOLVIDO / ⚠️ PENDENTE
+- Cada documento com a página onde foi encontrado (ex.: "Atesto — processo.pdf p. 37")
+- Tabela de conferências (OK / DIVERGENTE / NÃO VERIFICÁVEL)
+- Texto sugerido para o despacho de devolução
+- Custo da análise e download do resultado em JSON
 
 ---
 
@@ -116,7 +104,7 @@ Acesse `http://localhost:8501`
 ## 💰 Custos
 
 - **Streamlit Cloud**: Grátis (1 app)
-- **Claude API**: ~R$ 1-2/mês (5 processos/dia)
+- **Claude API**: cobrado por análise; o valor aparece na tela após cada análise (processos grandes custam mais — use o modo econômico)
 - **GitHub**: Grátis
 - **Total**: Praticamente grátis! 🎉
 
