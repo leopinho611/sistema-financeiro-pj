@@ -1,3 +1,2 @@
-streamlit
-pandas
-openpyxl
+streamlit>=1.46
+anthropic>=1.12,<2

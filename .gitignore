@@ -1,9 +1,17 @@
+# Environment variables
+.env
+.env.local
+.streamlit/secrets.toml
+
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+env/
+venv/
+ENV/
 build/
 develop-eggs/
 dist/
@@ -20,33 +28,18 @@ wheels/
 .installed.cfg
 *.egg
 
-# Streamlit
-.streamlit/
-.streamlit/secrets.toml
-
-# Virtual Environment
-venv/
-ENV/
-env/
-.venv
-
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-
-# OS
 .DS_Store
-Thumbs.db
 
-# Data files
-*.csv
-*.xlsx
-extratos/
-dados/
+# Streamlit
+.streamlit/cache/
+.streamlit/logs/
 
-# Environment variables
-.env
-.env.local
+# Results
+resultados/
+*.json
