@@ -1,11 +1,13 @@
 💰 Sistema de Controle Financeiro - PJ/Autônomo
 Um aplicativo web que automatiza a categorização de extratos bancários e gera análises visuais para profissionais autônomos e PJs.
 🚀 Funcionalidades
-✅ Upload de Extratos - Aceita CSV ou XLSX de qualquer banco  
-✅ Categorização Automática - 9 categorias principais (Casa, Transporte, Alimentação, etc)  
-✅ Análises Visuais - Gráficos interativos com Plotly  
-✅ Exportação - Baixa dados categorizados em CSV ou XLSX  
-✅ Filtros Inteligentes - Organize e analise por categoria
+✅ Upload de Extratos - Aceita CSV ou XLSX de qualquer banco (detecta separador, acentuação, linhas de título e formato de valor brasileiro)  
+✅ Identificação automática das colunas - Data, descrição, valor ou crédito/débito (ajustável na tela)  
+✅ Categorização Automática - 11 categorias de saída + RECEITA para entradas  
+✅ Resumo em R$ - Entradas, saídas, saldo e gastos por categoria  
+✅ Mês a Mês - Entradas × saídas e categorias por mês  
+✅ Exportação - CSV (padrão Excel brasileiro) ou XLSX com abas de resumo  
+✅ Filtros - Por categoria e busca na descrição
 📋 Categorias Suportadas
 🏠 CASA - Aluguel, condomínio, água, luz, gás, internet, etc
 🚗 TRANSPORTE - Combustível, Uber, ônibus, estacionamento, etc
@@ -15,11 +17,15 @@ Um aplicativo web que automatiza a categorização de extratos bancários e gera
 🎬 LAZER - Cinema, teatro, viagem, hotel, etc
 👕 SHOPPING - Roupas, sapatos, loja, etc
 💰 INVESTIMENTO - FII, ações, tesouro, cripto, etc
-💳 IMPOSTO - IRPF, IRPJ, ICMS, PIS, etc
+💳 IMPOSTO - IRPF, IRPJ, ICMS, PIS, DARF, Simples Nacional, etc
+🏦 TARIFAS BANCÁRIAS - Tarifas, IOF, juros, anuidade, etc
+🔁 TRANSFERÊNCIA - PIX, TED, DOC sem outra categoria identificada
+💵 RECEITA - Todas as entradas
+❓ OUTRO - O que não foi identificado
 🛠️ Tech Stack
 Frontend: Streamlit
 Dados: Pandas, NumPy
-Gráficos: Plotly
+Gráficos: Altair (incluso no Streamlit)
 Excel: openpyxl
 Host: Streamlit Cloud (Gratuito)
 📦 Como Instalar Localmente
@@ -35,6 +41,8 @@ pip install -r requirements.txt
 streamlit run streamlit_app.py
 ```
 O app abrirá em `http://localhost:8501`
+
+Para rodar os testes: `pip install pytest` e depois `pytest`
 🌐 Usando Online
 Acesse diretamente em:
 https://sistema-financeiro-pj-cfzvrv3ryghyyfppncz97u.streamlit.app/
@@ -56,7 +64,7 @@ Nenhum terceiro tem acesso aos seus extratos
 [ ] Integração com Google Drive API (importar extratos automaticamente)
 [ ] SQLite para histórico de transações
 [ ] Previsões de despesas com ML
-[ ] Dashboard temporal (mês a mês)
+[x] Dashboard temporal (mês a mês)
 [ ] Sugestões automáticas de economia
 [ ] Relatório PDF automático
 📧 Suporte
