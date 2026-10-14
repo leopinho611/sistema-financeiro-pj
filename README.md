@@ -1,4 +1,5 @@
-💰 Sistema de Controle Financeiro - PJ/Autônomo
+Sistema de Controle Financeiro
+*Seus gastos na palma da mão*
 Um aplicativo web que automatiza a categorização de extratos bancários e gera análises visuais para profissionais autônomos e PJs.
 🚀 Funcionalidades
 ✅ Upload de Extratos - Vários arquivos de uma vez (meses e contas diferentes), CSV ou Excel de qualquer banco (detecta separador, acentuação, linhas de título e formato de valor brasileiro; aceita o ".excel" do BB)  
@@ -7,6 +8,7 @@ Um aplicativo web que automatiza a categorização de extratos bancários e gera
 ✅ Identificação automática das colunas - Data, descrição, valor ou crédito/débito (ajustável na tela)  
 ✅ Categorização Automática - 11 categorias de saída + RECEITA para entradas  
 ✅ Resumo em R$ - Entradas, saídas, saldo e gastos por categoria  
+✅ Fornecedores - Clique numa categoria para ver os 10 maiores fornecedores (o resto em "Outros fornecedores")  
 ✅ Mês a Mês - Entradas × saídas e categorias por mês  
 ✅ Exportação - CSV (padrão Excel brasileiro) ou XLSX com abas de resumo  
 ✅ Filtros - Por conta, período, categoria e busca na descrição

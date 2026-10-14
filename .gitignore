@@ -20,8 +20,7 @@ wheels/
 .installed.cfg
 *.egg
 
-# Streamlit
-.streamlit/
+# Streamlit (o config.toml com o tema vai para o repositório; segredos não)
 .streamlit/secrets.toml
 
 # Virtual Environment
