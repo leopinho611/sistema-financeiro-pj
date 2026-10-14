@@ -1,5 +1,6 @@
 import io
 from datetime import datetime
+from html import escape
 
 import altair as alt
 import pandas as pd
@@ -27,29 +28,64 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Identidade visual: azul-marinho, dourado e branco-osso (tema em .streamlit/config.toml)
-MARINHO = "#1b2a4a"
+# Identidade visual: azul-marinho, dourado e branco-osso. Os temas claro e escuro
+# ficam em .streamlit/config.toml; o CSS abaixo herda a cor do texto do tema
+# (currentColor) para funcionar nos dois.
 DOURADO = "#c9a227"        # detalhes (linhas, bordas); não usado em dados
-# Cores dos gráficos: marinho e dourado ajustados para contraste >= 3:1 no
-# branco-osso e separação para daltonismo (validados)
-COR_ENTRADAS = "#24529e"   # azul-marinho
+# Cores dos gráficos: validadas para contraste >= 3:1 e separação para daltonismo
+# tanto no fundo branco-osso quanto no azul-marinho escuro
+COR_ENTRADAS = "#3d6bc4"   # azul
 COR_SAIDAS = "#a8801f"     # dourado escuro
 
 st.markdown(f"""
 <style>
   .cabecalho {{ border-bottom: 2px solid {DOURADO}; padding-bottom: .4rem; margin-bottom: 1.2rem; }}
-  .cabecalho h1 {{ color: {MARINHO}; font-weight: 700; margin: 0; padding: 0; }}
-  .cabecalho .slogan {{ text-align: right; color: #8a6d1d; font-style: italic;
+  .cabecalho h1 {{ font-weight: 700; margin: 0; padding: 0; }}
+  .cabecalho .slogan {{ text-align: right; color: {DOURADO}; font-style: italic;
                         font-size: 1.05rem; margin: 0; letter-spacing: .02em; }}
-  [data-testid="stMetric"] {{ background: #fffdf8; border: 1px solid #e3d9c3;
+  [data-testid="stMetric"] {{ background: color-mix(in srgb, currentColor 4%, transparent);
+                              border: 1px solid color-mix(in srgb, {DOURADO} 35%, transparent);
                               border-left: 4px solid {DOURADO}; border-radius: 8px;
                               padding: .7rem 1rem; }}
-  [data-testid="stMetricLabel"] p {{ color: #5b6478; }}
+  [data-testid="stMetricLabel"] p {{ opacity: .75; }}
   [data-testid="stMetricValue"] {{ font-size: 1.55rem; }}
-  h2, h3 {{ color: {MARINHO}; }}
-  .dica {{ color: #7a6a45; font-size: .85rem; margin: -.3rem 0 .6rem 0; }}
+  .dica {{ font-size: .85rem; margin: -.3rem 0 .6rem 0; opacity: .7; }}
   .dica::before {{ content: "☝ "; color: {DOURADO}; }}
   [data-testid="stSidebar"] {{ border-right: 2px solid {DOURADO}; }}
+
+  /* Tabela de categorias que abre os fornecedores na própria linha */
+  .tabcat {{ border: 1px solid color-mix(in srgb, {DOURADO} 40%, transparent);
+             border-radius: 8px; overflow: hidden; font-size: .92rem; margin-bottom: 1rem; }}
+  .tabcat .linha {{ display: grid; gap: .75rem; align-items: center; padding: .55rem .9rem;
+                    grid-template-columns: minmax(0, 2.2fr) 1.2fr .8fr 1.5fr; }}
+  .tabcat .cab {{ font-size: .8rem; opacity: .7;
+                  border-bottom: 1px solid color-mix(in srgb, {DOURADO} 40%, transparent); }}
+  .tabcat details {{ border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent); }}
+  .tabcat details:last-child {{ border-bottom: none; }}
+  .tabcat summary {{ cursor: pointer; list-style: none; }}
+  .tabcat summary::-webkit-details-marker {{ display: none; }}
+  .tabcat summary:hover {{ background: color-mix(in srgb, {DOURADO} 12%, transparent); }}
+  .tabcat summary .nome::before {{ content: "▸"; color: {DOURADO}; display: inline-block;
+                                   width: 1.1em; transition: transform .15s; }}
+  .tabcat details[open] > summary {{ background: color-mix(in srgb, {DOURADO} 9%, transparent);
+                                     font-weight: 600; }}
+  .tabcat details[open] > summary .nome::before {{ transform: rotate(90deg); }}
+  .tabcat .forn .nome {{ padding-left: 1.4rem; }}
+  .tabcat .forn {{ font-size: .88rem;
+                   border-top: 1px dashed color-mix(in srgb, currentColor 10%, transparent); }}
+  .tabcat .forn.outros {{ opacity: .75; font-style: italic; }}
+  .tabcat .num {{ text-align: right; font-variant-numeric: tabular-nums; }}
+  .tabcat .pct {{ display: flex; align-items: center; gap: .5rem; }}
+  .tabcat .pct .trilho {{ flex: 1; height: 6px; border-radius: 3px; overflow: hidden;
+                          background: color-mix(in srgb, currentColor 12%, transparent); }}
+  .tabcat .pct .trilho i {{ display: block; height: 100%; border-radius: 3px;
+                            background: {COR_SAIDAS}; }}
+  .tabcat .pct b {{ font-weight: inherit; min-width: 3.2em; text-align: right;
+                    font-variant-numeric: tabular-nums; }}
+  @media (max-width: 640px) {{
+    .tabcat .linha {{ grid-template-columns: minmax(0, 1.6fr) 1.2fr 1fr; }}
+    .tabcat .qtd {{ display: none; }}
+  }}
 </style>
 <div class="cabecalho">
   <h1>Sistema de Controle Financeiro</h1>
@@ -116,6 +152,37 @@ def grafico_mensal(mensal):
     )
 
 
+def _pct(v):
+    return f"{v:.1f}%".replace(".", ",")
+
+
+def _linha_html(classe, nome, total, qtd, pct, tag="div"):
+    largura = max(0.0, min(100.0, pct))
+    return (f'<{tag} class="linha {classe}"><span class="nome">{escape(str(nome))}</span>'
+            f'<span class="num">{formatar_reais(total)}</span>'
+            f'<span class="num qtd">{int(qtd)}</span>'
+            f'<span class="pct"><span class="trilho"><i style="width:{largura:.1f}%"></i></span>'
+            f'<b>{_pct(pct)}</b></span></{tag}>')
+
+
+def tabela_categorias_html(cats, df):
+    """Categorias que abrem os 10 maiores fornecedores logo abaixo da linha."""
+    partes = ['<div class="tabcat">',
+              '<div class="linha cab"><span>Categoria</span><span class="num">Total</span>'
+              '<span class="num qtd">Transações</span><span>% das saídas</span></div>']
+    for _, c in cats.iterrows():
+        partes.append("<details>")
+        partes.append(_linha_html("", c["Categoria"], c["Total"], c["Transações"],
+                                  c["% das saídas"], tag="summary"))
+        for _, f in resumo_fornecedores(df, c["Categoria"]).iterrows():
+            classe = "forn outros" if f["Fornecedor"].startswith("Outros fornecedores") else "forn"
+            partes.append(_linha_html(classe, f["Fornecedor"], f["Total"], f["Transações"],
+                                      f["% da categoria"]))
+        partes.append("</details>")
+    partes.append("</div>")
+    return "".join(partes)
+
+
 def tabela_em_reais(df, colunas_reais, colunas_pct=()):
     """Cópia do DataFrame com valores formatados em R$ para exibição."""
     exibir = df.copy()
@@ -138,6 +205,7 @@ with st.sidebar:
         help="Extratos em CSV ou Excel de qualquer banco, de vários meses e contas. "
              "Faturas do cartão BB também em PDF."
     )
+    st.caption("🌓 Tema claro ou escuro: menu ⋮ no canto superior direito → Settings")
     nome_titular = st.text_input(
         "Seu nome (opcional)",
         placeholder="Ex: Maria Silva",
@@ -282,21 +350,8 @@ with tab1:
         st.subheader("Saídas por categoria")
         dica("Passe o mouse sobre as barras para ver os valores")
         st.altair_chart(grafico_categorias(cats), width="stretch")
-        dica("Clique numa categoria para ver os maiores fornecedores · "
-             "clique no título de uma coluna para classificar")
-        selecao = st.dataframe(tabela_em_reais(cats, ["Total"], ["% das saídas"]),
-                               hide_index=True, width="stretch", key="tabela_categorias",
-                               on_select="rerun", selection_mode="single-row")
-
-        linhas = selecao.selection.rows if selecao else []
-        if linhas:
-            categoria = cats.iloc[linhas[0]]["Categoria"]
-            forn = resumo_fornecedores(df, categoria)
-            st.subheader(f"Fornecedores — {categoria.capitalize()}")
-            st.caption(f"Os {min(10, len(forn))} que mais receberam nesta categoria; "
-                       "os demais somados em \"Outros fornecedores\".")
-            st.dataframe(tabela_em_reais(forn, ["Total"], ["% da categoria"]),
-                         hide_index=True, width="stretch")
+        dica("Clique numa categoria para abrir os maiores fornecedores")
+        st.markdown(tabela_categorias_html(cats, df), unsafe_allow_html=True)
 
         outros = cats.loc[cats["Categoria"] == "OUTRO", "% das saídas"]
         if not outros.empty and outros.iloc[0] > 20:
