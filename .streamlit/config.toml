@@ -1,7 +1,16 @@
-# Identidade visual: azul-marinho, dourado e branco-osso
-[theme]
-base = "light"
+# Identidade visual: azul-marinho, dourado e branco-osso.
+# Dois temas: o visitante escolhe em ⋮ (canto superior direito) → Settings.
+
+# Tema claro (visual original, branco-osso)
+[theme.light]
 primaryColor = "#1b2a4a"               # azul-marinho (botões, abas, seleção)
 backgroundColor = "#f7f3ea"            # branco-osso
 secondaryBackgroundColor = "#ece4d2"   # branco-osso mais escuro (barra lateral, caixas)
 textColor = "#14213d"                  # marinho escuro
+
+# Tema escuro (fundo azul-marinho, detalhes dourados, texto branco-osso)
+[theme.dark]
+primaryColor = "#c9a227"               # dourado
+backgroundColor = "#0f1a2e"            # azul-marinho profundo
+secondaryBackgroundColor = "#18264a"   # marinho (barra lateral, caixas)
+textColor = "#f2ece0"                  # branco-osso
