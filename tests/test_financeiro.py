@@ -302,3 +302,45 @@ def test_resumo_fornecedores_top_10_e_outros():
     assert r.iloc[-1]["Fornecedor"] == "Outros fornecedores (3)"
     assert "Ferreira Costa" not in r["Fornecedor"].tolist()  # 10 + 10 = R$ 10, ficou em outros
     assert round(r["% da categoria"].sum(), 6) == 100
+
+
+# ----------------------------------------------------------------------------
+# Subcategorias
+# ----------------------------------------------------------------------------
+@pytest.mark.parametrize("categoria, descricao, sub", [
+    ("ALIMENTAÇÃO", "SUPERMERCADO EXEMPLO NATAL", "Supermercado"),
+    ("ALIMENTAÇÃO", "Pix - RESTAURANTE DO ZE", "Restaurante"),
+    ("ALIMENTAÇÃO", "IFOOD *PEDIDO", "Restaurante"),
+    ("ALIMENTAÇÃO", "PADARIA DO BAIRRO", "Outros"),
+    ("SAÚDE", "DROGARIA EXEMPLO", "Drogaria"),
+    ("SAÚDE", "Pagamento de boleto efetuado - UNIMED NATAL", "Plano de saúde"),
+    ("TRANSPORTE", "PostoMacaco PARNAMIRIM", "Posto de gasolina"),
+    ("TRANSPORTE", "YOUSE AUTO*2612", "Seguro"),
+    ("TRANSPORTE", "DL*99 RIDE SAO PAULO", "Transporte por aplicativo"),
+    ("CASA", "Pagto Energia Elétrica - COSERN", "Luz"),
+    ("CASA", "Pagamento de boleto efetuado - CAERN", "Água"),
+    ("CASA", "LEROY MERLIN PARNAMIRIM", "Manutenções"),
+    ("CASA", "Pix - CONDOMINIO RESIDENCIAL", "Condomínio"),
+    ("SHOPPING", "LOJA X", ""),          # categoria sem subcategorias
+])
+def test_subcategorizar(categoria, descricao, sub):
+    from financeiro import subcategorizar
+    assert subcategorizar(categoria, descricao) == sub
+
+
+def test_secao_restaurantes_da_fatura_vira_subcategoria():
+    from financeiro import subcategorizar
+    assert subcategorizar("ALIMENTAÇÃO", "CASA DA VOVO NATAL", secao="restaurantes") == "Restaurante"
+
+
+def test_resumo_subcategorias_outros_por_ultimo():
+    from financeiro import resumo_subcategorias
+    t = pd.DataFrame({
+        "Categoria": "ALIMENTAÇÃO", "Tipo": "Saída",
+        "Subcategoria": ["Outros", "Supermercado", "Restaurante", "Restaurante"],
+        "Valor": [-500.0, -100.0, -30.0, -20.0],
+    })
+    r = resumo_subcategorias(t, "ALIMENTAÇÃO")
+    assert r["Subcategoria"].tolist() == ["Supermercado", "Restaurante", "Outros"]
+    assert r["Total"].tolist() == [100.0, 50.0, 500.0]
+    assert resumo_subcategorias(t.assign(Categoria="LAZER", Subcategoria=""), "LAZER").empty

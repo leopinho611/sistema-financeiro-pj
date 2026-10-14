@@ -8,12 +8,13 @@ Um aplicativo web que automatiza a categorização de extratos bancários e gera
 ✅ Identificação automática das colunas - Data, descrição, valor ou crédito/débito (ajustável na tela)  
 ✅ Categorização Automática - 11 categorias de saída + RECEITA para entradas  
 ✅ Resumo em R$ - Entradas, saídas, saldo e gastos por categoria  
-✅ Fornecedores - Clique numa categoria para abrir, na própria linha, os 10 maiores fornecedores (o resto em "Outros fornecedores")  
+✅ Subcategorias e fornecedores - Clique numa categoria para abrir, na própria linha, as subcategorias e os 10 maiores fornecedores de cada uma (o resto em "Outros fornecedores")  
 ✅ Mês a Mês - Entradas × saídas e categorias por mês  
 ✅ Tema claro ou escuro - Azul-marinho, dourado e branco-osso; troque em ⋮ → Settings (por padrão segue o aparelho)  
 ✅ Exportação - CSV (padrão Excel brasileiro) ou XLSX com abas de resumo  
 ✅ Filtros - Por conta, período, categoria e busca na descrição
 📋 Categorias Suportadas
+Subcategorias: ALIMENTAÇÃO (Supermercado, Restaurante), SAÚDE (Drogaria, Plano de saúde), TRANSPORTE (Posto de gasolina, Seguro, Transporte por aplicativo), CASA (Água, Luz, Internet, Gás, Condomínio, Aluguel, Manutenções); o que não se encaixa fica em "Outros"
 🏠 CASA - Aluguel, condomínio, água, luz, gás, internet, etc
 🚗 TRANSPORTE - Combustível, Uber, ônibus, estacionamento, etc
 🍽️ ALIMENTAÇÃO - Restaurante, mercado, padaria, delivery, etc

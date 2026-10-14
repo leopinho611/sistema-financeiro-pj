@@ -107,7 +107,7 @@ def categorizar(descricao, valor=None):
     Aplicações/resgates e pagamento de fatura são identificados primeiro,
     nos dois sentidos, porque são movimentações internas.
     """
-    texto = normalizar(descricao)
+    texto = normalizar(descricao).replace("mercado livre", "mercadolivre")
     if _PADRAO_APLICACAO.search(texto):
         return CATEGORIA_APLICACAO
     if _PADRAO_FATURA.search(texto):
@@ -376,6 +376,66 @@ def resumo_mensal(t):
 
 
 # ============================================================================
+# SUBCATEGORIAS
+# ============================================================================
+# Só as categorias listadas aqui têm subcategorias; nas demais o detalhe vai
+# direto para os fornecedores. O que não casar vira "Outros".
+# Mesmas regras de palavras de CATEGORIAS (palavra inteira; "*" = começo da palavra).
+SUBCATEGORIAS = {
+    "ALIMENTAÇÃO": {
+        "Supermercado": ["supermercado*", "mercado", "favorito", "nordestao", "carrefour",
+                         "atacadao", "assai", "pao de acucar", "extra"],
+        "Restaurante": ["restaurante", "restau*", "lanchonete", "pizzaria", "burger*",
+                        "burguer*", "hamburgueria", "camaroes", "ifood", "rappi", "delivery",
+                        "gelateria", "sorveteria", "crepe*", "cafeteria", "churrascaria",
+                        "brasasfood", "bar"],
+    },
+    "SAÚDE": {
+        "Drogaria": ["farmacia", "drogaria", "pague menos", "drogasil", "raia"],
+        "Plano de saúde": ["unimed", "hapvida", "plano de saude", "amil", "sulamerica",
+                           "bradesco saude"],
+    },
+    "TRANSPORTE": {
+        "Posto de gasolina": ["posto*", "combustivel", "gasolina", "etanol", "shell",
+                              "ipiranga", "petrobras"],
+        "Seguro": ["seguro*", "youse"],
+        "Transporte por aplicativo": ["uber*", "99 ride", "99app", "99pop", "indriver"],
+    },
+    "CASA": {
+        "Água": ["agua", "caern"],
+        "Luz": ["luz", "energia", "cosern", "neoenergia"],
+        "Internet": ["internet", "fibra"],
+        "Gás": ["gas"],
+        "Condomínio": ["condominio"],
+        "Aluguel": ["aluguel"],
+        "Manutenções": ["leroy merlin", "ferreira cost*", "manutencao", "reforma",
+                        "material de construcao", "eletricista", "encanador"],
+    },
+}
+SUBCATEGORIA_OUTROS = "Outros"
+# Seções da fatura do BB que já dizem a subcategoria
+SECOES_FATURA_SUB = {"supermercados": "Supermercado", "restaurantes": "Restaurante"}
+
+_PADROES_SUB = {cat: {sub: None for sub in subs} for cat, subs in SUBCATEGORIAS.items()}
+
+
+def subcategorizar(categoria, descricao, fornecedor="", secao=""):
+    """Subcategoria de uma saída, ou "" quando a categoria não tem subcategorias."""
+    regras = SUBCATEGORIAS.get(categoria)
+    if not regras:
+        return ""
+    if categoria == "ALIMENTAÇÃO" and secao in SECOES_FATURA_SUB:
+        return SECOES_FATURA_SUB[secao]
+    texto = normalizar(f"{descricao} {fornecedor}")
+    for sub, palavras in regras.items():
+        if _PADROES_SUB[categoria][sub] is None:
+            _PADROES_SUB[categoria][sub] = _padrao(palavras)
+        if _PADROES_SUB[categoria][sub].search(texto):
+            return sub
+    return SUBCATEGORIA_OUTROS
+
+
+# ============================================================================
 # FORNECEDORES
 # ============================================================================
 # Partes da descrição que dizem o tipo do lançamento, não quem recebeu
@@ -445,9 +505,27 @@ def _apresentar(nome):
     return " ".join(p if "/" in p else p.capitalize() for p in nome.split())
 
 
-def resumo_fornecedores(t, categoria, n=10):
-    """Os n fornecedores que mais receberam numa categoria; o resto em "Outros fornecedores"."""
-    saidas = t[(t["Tipo"] == "Saída") & (t["Categoria"] == categoria)].copy()
+def resumo_subcategorias(t, categoria):
+    """Total de saídas por subcategoria dentro de uma categoria ("Outros" por último)."""
+    saidas = t[(t["Tipo"] == "Saída") & (t["Categoria"] == categoria)]
+    if saidas.empty or "Subcategoria" not in saidas or saidas["Subcategoria"].eq("").all():
+        return pd.DataFrame(columns=["Subcategoria", "Total", "Transações", "% da categoria"])
+    tabela = (saidas.groupby("Subcategoria")["Valor"].agg(["sum", "count"])
+              .rename(columns={"sum": "Total", "count": "Transações"}))
+    tabela["Total"] = -tabela["Total"]
+    tabela["% da categoria"] = tabela["Total"] / tabela["Total"].sum() * 100
+    tabela["_outros"] = tabela.index == SUBCATEGORIA_OUTROS
+    tabela = tabela.sort_values(["_outros", "Total"], ascending=[True, False])
+    return tabela.drop(columns="_outros").reset_index()
+
+
+def resumo_fornecedores(t, categoria, n=10, subcategoria=None):
+    """Os n fornecedores que mais receberam numa categoria (ou subcategoria); o resto
+    em "Outros fornecedores". O % é sobre o total do grupo detalhado."""
+    filtro = (t["Tipo"] == "Saída") & (t["Categoria"] == categoria)
+    if subcategoria is not None:
+        filtro &= t["Subcategoria"] == subcategoria
+    saidas = t[filtro].copy()
     if saidas.empty:
         return pd.DataFrame(columns=["Fornecedor", "Total", "Transações", "% da categoria"])
     # Agrupa ignorando maiúsculas e acentos ("VIVIANE" = "Viviane")
@@ -536,13 +614,17 @@ def ler_fatura_bb(texto, conta="BB Cartão"):
         if valor > 0:
             categoria = CATEGORIA_ESTORNO
         else:
-            categoria = SECOES_FATURA_BB.get(secao) or categorizar(descricao, valor)
-            if categoria == "TRANSFERÊNCIA":
-                categoria = CATEGORIA_PADRAO
+            # Palavras-chave primeiro: a seção da fatura às vezes erra
+            # (sacolão em "Saúde"); ela só decide quando nada foi reconhecido
+            categoria = categorizar(descricao, valor)
+            if categoria in (CATEGORIA_PADRAO, "TRANSFERÊNCIA"):
+                categoria = SECOES_FATURA_BB.get(secao, CATEGORIA_PADRAO)
         linhas.append({"Data": data, "Descrição": descricao, "Valor": valor,
-                       "Categoria": categoria, "Fornecedor": fornecedor})
+                       "Categoria": categoria, "Fornecedor": fornecedor,
+                       "_secao": secao or ""})
 
-    t = pd.DataFrame(linhas, columns=["Data", "Descrição", "Valor", "Categoria", "Fornecedor"])
+    t = pd.DataFrame(linhas, columns=["Data", "Descrição", "Valor", "Categoria", "Fornecedor",
+                                      "_secao"])
     t["Tipo"] = ["Entrada" if v > 0 else "Saída" for v in t["Valor"]]
     t["Conta"] = conta
     t["Mês"] = t["Data"].dt.to_period("M").astype(str)
@@ -630,7 +712,7 @@ def consolidar(tabelas, nome_titular=""):
     tabelas = [x for x in tabelas if not x.empty]
     if not tabelas:
         return pd.DataFrame(columns=["Data", "Descrição", "Valor", "Tipo", "Categoria",
-                                     "Fornecedor", "Conta", "Mês"])
+                                     "Subcategoria", "Fornecedor", "Conta", "Mês"])
     for n, x in enumerate(tabelas):
         x["_arquivo"] = n
     t = pd.concat(tabelas, ignore_index=True)
@@ -649,6 +731,13 @@ def consolidar(tabelas, nome_titular=""):
     t = _marcar_transferencias_entre_contas(t)
     if nome_titular:
         t = _marcar_transferencias_para_si(t, nome_titular)
+    if "Fornecedor" not in t:
+        t["Fornecedor"] = t["Descrição"].map(extrair_fornecedor)
+    t["Fornecedor"] = t["Fornecedor"].fillna(t["Descrição"].map(extrair_fornecedor))
+    secoes = t["_secao"].fillna("") if "_secao" in t else pd.Series("", index=t.index)
+    t["Subcategoria"] = [subcategorizar(c, d, f, sec) for c, d, f, sec in
+                         zip(t["Categoria"], t["Descrição"], t["Fornecedor"], secoes)]
+    t = t.drop(columns=["_secao"], errors="ignore")
     return t.sort_values(["Data", "Conta"]).reset_index(drop=True)
 
 

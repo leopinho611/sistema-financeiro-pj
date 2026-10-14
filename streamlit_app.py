@@ -16,6 +16,7 @@ from financeiro import (
     resumo_categorias,
     resumo_fornecedores,
     resumo_mensal,
+    resumo_subcategorias,
 )
 
 # ============================================================================
@@ -70,6 +71,15 @@ st.markdown(f"""
   .tabcat details[open] > summary {{ background: color-mix(in srgb, {DOURADO} 9%, transparent);
                                      font-weight: 600; }}
   .tabcat details[open] > summary .nome::before {{ transform: rotate(90deg); }}
+  /* Linhas abertas ganham fundo azul claro; cada nível aberto escurece um pouco mais */
+  .tabcat .detalhe {{ background: color-mix(in srgb, {COR_ENTRADAS} 13%, transparent); }}
+  .tabcat .sub {{ border-bottom: none;
+                  border-top: 1px solid color-mix(in srgb, currentColor 8%, transparent); }}
+  .tabcat .sub > summary {{ font-size: .9rem; }}
+  .tabcat .sub > summary .nome {{ padding-left: 1.4rem; }}
+  .tabcat .sub[open] > summary {{ background: color-mix(in srgb, {COR_ENTRADAS} 8%, transparent);
+                                  font-weight: 600; }}
+  .tabcat .sub .forn .nome {{ padding-left: 2.8rem; }}
   .tabcat .forn .nome {{ padding-left: 1.4rem; }}
   .tabcat .forn {{ font-size: .88rem;
                    border-top: 1px dashed color-mix(in srgb, currentColor 10%, transparent); }}
@@ -165,8 +175,22 @@ def _linha_html(classe, nome, total, qtd, pct, tag="div"):
             f'<b>{_pct(pct)}</b></span></{tag}>')
 
 
+def _linhas_fornecedores(df, categoria, subcategoria=None):
+    partes = []
+    for _, f in resumo_fornecedores(df, categoria, subcategoria=subcategoria).iterrows():
+        classe = "forn outros" if f["Fornecedor"].startswith("Outros fornecedores") else "forn"
+        partes.append(_linha_html(classe, f["Fornecedor"], f["Total"], f["Transações"],
+                                  f["% da categoria"]))
+    return partes
+
+
 def tabela_categorias_html(cats, df):
-    """Categorias que abrem os 10 maiores fornecedores logo abaixo da linha."""
+    """Categoria → subcategoria → 10 maiores fornecedores, abrindo logo abaixo da linha.
+
+    Categorias sem subcategorias abrem direto nos fornecedores. O % de cada linha
+    aberta é sobre o grupo de cima (subcategoria sobre a categoria, fornecedor
+    sobre a subcategoria).
+    """
     partes = ['<div class="tabcat">',
               '<div class="linha cab"><span>Categoria</span><span class="num">Total</span>'
               '<span class="num qtd">Transações</span><span>% das saídas</span></div>']
@@ -174,11 +198,19 @@ def tabela_categorias_html(cats, df):
         partes.append("<details>")
         partes.append(_linha_html("", c["Categoria"], c["Total"], c["Transações"],
                                   c["% das saídas"], tag="summary"))
-        for _, f in resumo_fornecedores(df, c["Categoria"]).iterrows():
-            classe = "forn outros" if f["Fornecedor"].startswith("Outros fornecedores") else "forn"
-            partes.append(_linha_html(classe, f["Fornecedor"], f["Total"], f["Transações"],
-                                      f["% da categoria"]))
-        partes.append("</details>")
+        partes.append('<div class="detalhe">')
+        subs = resumo_subcategorias(df, c["Categoria"])
+        if subs.empty:
+            partes += _linhas_fornecedores(df, c["Categoria"])
+        else:
+            for _, sc in subs.iterrows():
+                partes.append('<details class="sub">')
+                partes.append(_linha_html("", sc["Subcategoria"], sc["Total"], sc["Transações"],
+                                          sc["% da categoria"], tag="summary"))
+                partes.append('<div class="detalhe">')
+                partes += _linhas_fornecedores(df, c["Categoria"], sc["Subcategoria"])
+                partes.append("</div></details>")
+        partes.append("</div></details>")
     partes.append("</div>")
     return "".join(partes)
 
@@ -350,7 +382,8 @@ with tab1:
         st.subheader("Saídas por categoria")
         dica("Passe o mouse sobre as barras para ver os valores")
         st.altair_chart(grafico_categorias(cats), width="stretch")
-        dica("Clique numa categoria para abrir os maiores fornecedores")
+        dica("Clique numa categoria para abrir as subcategorias e os maiores fornecedores · "
+             "nas linhas abertas, o % é sobre o grupo de cima")
         st.markdown(tabela_categorias_html(cats, df), unsafe_allow_html=True)
 
         outros = cats.loc[cats["Categoria"] == "OUTRO", "% das saídas"]
@@ -402,7 +435,8 @@ with tab3:
     st.caption(f"{len(visao)} transações — total {formatar_reais(visao['Valor'].sum())}")
     dica("Clique no título de uma coluna para classificar · use os filtros acima para refinar")
     st.dataframe(
-        visao[["Data", "Conta", "Fornecedor", "Descrição", "Valor", "Tipo", "Categoria"]],
+        visao[["Data", "Conta", "Fornecedor", "Descrição", "Valor", "Tipo", "Categoria",
+               "Subcategoria"]],
         hide_index=True, width="stretch",
         column_config={
             "Data": st.column_config.DateColumn(format="DD/MM/YYYY"),
