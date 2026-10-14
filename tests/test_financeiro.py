@@ -255,3 +255,50 @@ def test_ofx_e_pdf_desconhecido_dao_erro_claro():
     from financeiro import carregar_arquivo
     with pytest.raises(ValueError, match="OFX"):
         carregar_arquivo("extrato.ofx", b"OFXHEADER:100")
+
+
+# ----------------------------------------------------------------------------
+# Fornecedores
+# ----------------------------------------------------------------------------
+@pytest.mark.parametrize("descricao, fornecedor", [
+    ("Transferência enviada pelo Pix - PADARIA EXEMPLO - 12.345.678/0001-90 - BANCO X (0001) "
+     "Agência: 1 Conta: 123-4", "Padaria Exemplo"),
+    ("Pagto Energia Elétrica - COSERN - DÉBITO ENERGIA", "Cosern"),
+    ("Pix - Recebido - 09/09 08:05 12345678901 Fulano de Tal", "Fulano De Tal"),
+    ("Compra com Cartão - 26/01 19:57 LOJA EXEMPLO", "Loja Exemplo"),
+    ("Pagamento de boleto efetuado - CLINICA SORRISO", "Clinica Sorriso"),
+    ("Transferência enviada pelo Pix - MARIA SOUZA (Transferência enviada) - •••.123.456-••",
+     "Maria Souza"),
+    ("Tarifa Pacote de Serviços - Cobrança referente 08/09/2026", "Tarifa Pacote De Serviços"),
+])
+def test_extrair_fornecedor(descricao, fornecedor):
+    from financeiro import extrair_fornecedor
+    assert extrair_fornecedor(descricao) == fornecedor
+
+
+@pytest.mark.parametrize("bruta, fornecedor", [
+    ("PADARIA DO BAIRRO      NATAL BR", "Padaria Do Bairro"),
+    ("MP*LOJINHA             SAO PAULO BR", "Lojinha"),
+    ("AMAZONMKTPLC*VENDEDOR  SAO PAULO BR", "Amazon"),
+    ("LOJA EXEMPLO PR PARC 09/10 NATAL BR", "Loja Exemplo Pr"),
+    ("LOJAS AMERICANAS 647   NATAL BR", "Lojas Americanas"),
+])
+def test_fornecedor_da_fatura(bruta, fornecedor):
+    from financeiro import fornecedor_da_fatura
+    assert fornecedor_da_fatura(bruta) == fornecedor
+
+
+def test_resumo_fornecedores_top_10_e_outros():
+    from financeiro import resumo_fornecedores
+    linhas = [(f"Loja {chr(65 + i)}", -float(100 - i)) for i in range(12)]  # 12 lojas
+    linhas += [("LOJA A", -10.0), ("Ferreira Cost", -5.0), ("Ferreira Costa", -5.0)]
+    t = pd.DataFrame({
+        "Fornecedor": [f for f, _ in linhas], "Valor": [v for _, v in linhas],
+        "Tipo": "Saída", "Categoria": "SHOPPING",
+    })
+    r = resumo_fornecedores(t, "SHOPPING")
+    assert len(r) == 11
+    assert r.iloc[0]["Fornecedor"] == "Loja A" and r.iloc[0]["Total"] == 110  # junta maiúsculas
+    assert r.iloc[-1]["Fornecedor"] == "Outros fornecedores (3)"
+    assert "Ferreira Costa" not in r["Fornecedor"].tolist()  # 10 + 10 = R$ 10, ficou em outros
+    assert round(r["% da categoria"].sum(), 6) == 100

@@ -349,6 +349,7 @@ def montar_transacoes(df, colunas, conta=""):
 
     t["Categoria"] = [categorizar(d, v) for d, v in zip(t["Descrição"], t["Valor"])]
     t["Tipo"] = [definir_tipo(c, v) for c, v in zip(t["Categoria"], t["Valor"])]
+    t["Fornecedor"] = t["Descrição"].map(extrair_fornecedor)
     t["Conta"] = conta
     t["Mês"] = t["Data"].dt.to_period("M").astype(str)
     return t.sort_values("Data").reset_index(drop=True)
@@ -372,6 +373,108 @@ def resumo_mensal(t):
     tabela = pd.DataFrame({"Entradas": entradas, "Saídas": saidas}).fillna(0)
     tabela["Saldo"] = tabela["Entradas"] - tabela["Saídas"]
     return tabela.sort_index().reset_index().rename(columns={"index": "Mês"})
+
+
+# ============================================================================
+# FORNECEDORES
+# ============================================================================
+# Partes da descrição que dizem o tipo do lançamento, não quem recebeu
+_PARTES_GENERICAS = ("transferencia", "pix", "ted", "doc", "pagamento", "pagto", "pgto",
+                     "compra", "debito", "credito", "recebid", "enviad", "tarifa",
+                     "cobranca", "boleto")
+# Prefixos de maquininha/intermediador: "MP*LOJA", "PG *LOJA", "DL*99 RIDE"
+_PREFIXO_INTERMEDIADOR = re.compile(r"^[A-Z0-9]{1,4}\s?\*\s*", re.IGNORECASE)
+
+
+def _limpar_nome(nome):
+    nome = re.sub(r"\([^)]*\)", " ", nome)                       # "(Transferência enviada)"
+    nome = re.sub(r"\b\d{2}/\d{2}(/\d{2,4})?\b|\b\d{2}:\d{2}\b", " ", nome)  # datas e horas
+    nome = re.sub(r"[\d.\-/•*]{5,}", " ", nome)                   # CPF, CNPJ, nº documento
+    nome = re.sub(r"\s+", " ", nome).strip(" -*.,")
+    return nome
+
+
+def extrair_fornecedor(descricao):
+    """Quem recebeu o dinheiro, a partir da descrição do extrato.
+
+    "Transferência enviada pelo Pix - PADARIA X - 12.345.678/0001-90 - BANCO" -> "Padaria X"
+    "Pagto Energia Elétrica - COSERN - DÉBITO ENERGIA" -> "Cosern"
+    """
+    partes = [p.strip() for p in str(descricao).split(" - ") if p.strip()]
+    for parte in partes:
+        if normalizar(parte).startswith(_PARTES_GENERICAS):
+            continue
+        nome = _limpar_nome(parte)
+        if len(nome) >= 2:
+            return _apresentar(nome)
+    return _apresentar(_limpar_nome(partes[0]) if partes else "") or "Não identificado"
+
+
+def fornecedor_da_fatura(descricao_bruta):
+    """Na fatura do BB, o nome da loja ocupa as primeiras 22 posições (13 nas parcelas)."""
+    if re.search(r"\bPARC \d{2}/\d{2}\b", descricao_bruta):
+        nome = descricao_bruta.split(" PARC ")[0]
+    else:
+        nome = descricao_bruta[:22]
+    nome = nome.strip()
+    if _PREFIXO_INTERMEDIADOR.match(nome):
+        nome = _PREFIXO_INTERMEDIADOR.sub("", nome)
+    elif "*" in nome:
+        nome = nome.split("*")[0]  # "AMAZONMKTPLC*AMANASTOR" -> "AMAZONMKTPLC"
+    return _apresentar(_limpar_nome(nome)) or "Não identificado"
+
+
+# Mesma empresa com nomes diferentes no extrato e na fatura (começo do nome, sem acento)
+APELIDOS_FORNECEDOR = [
+    ("amazon", "Amazon"), ("mercadoli", "Mercado Livre"), ("mercado livre", "Mercado Livre"),
+    ("lojas riachue", "Riachuelo"), ("riachuelo", "Riachuelo"), ("neoenergia cosern", "Cosern"),
+    ("leroy merlin", "Leroy Merlin"), ("lojas americanas", "Lojas Americanas"),
+    ("ifood", "iFood"), ("uber", "Uber"), ("99 ride", "99"), ("netflix", "Netflix"),
+    ("spotify", "Spotify"), ("pague menos", "Pague Menos"),
+]
+
+
+def _apresentar(nome):
+    if not nome:
+        return ""
+    nome = re.sub(r"(\s+\d+)+$", "", nome)  # número da filial: "LOJAS AMERICANAS 647"
+    chave = normalizar(nome)
+    for prefixo, apelido in APELIDOS_FORNECEDOR:
+        if chave.startswith(prefixo):
+            return apelido
+    return " ".join(p if "/" in p else p.capitalize() for p in nome.split())
+
+
+def resumo_fornecedores(t, categoria, n=10):
+    """Os n fornecedores que mais receberam numa categoria; o resto em "Outros fornecedores"."""
+    saidas = t[(t["Tipo"] == "Saída") & (t["Categoria"] == categoria)].copy()
+    if saidas.empty:
+        return pd.DataFrame(columns=["Fornecedor", "Total", "Transações", "% da categoria"])
+    # Agrupa ignorando maiúsculas e acentos ("VIVIANE" = "Viviane")
+    saidas["_chave"] = saidas["Fornecedor"].map(normalizar)
+    # Nome cortado é a mesma empresa: "ferreira cost" -> "ferreira costa"
+    chaves = sorted(saidas["_chave"].unique(), key=len, reverse=True)
+    junta = {}
+    for curta in chaves:
+        longa = next((c for c in chaves if len(c) > len(curta) >= 6 and c.startswith(curta)), None)
+        if longa:
+            junta[curta] = junta.get(longa, longa)
+    saidas["_chave"] = saidas["_chave"].replace(junta)
+    nome = saidas.groupby("_chave")["Fornecedor"].agg(lambda s: max(s.unique(), key=len))
+    tabela = (saidas.groupby("_chave")["Valor"].agg(["sum", "count"])
+              .rename(columns={"sum": "Total", "count": "Transações"}))
+    tabela["Total"] = -tabela["Total"]
+    tabela["Fornecedor"] = nome
+    tabela = tabela.sort_values("Total", ascending=False)
+    if len(tabela) > n:
+        resto = tabela.iloc[n:]
+        outros = pd.DataFrame([{"Fornecedor": f"Outros fornecedores ({len(resto)})",
+                                "Total": resto["Total"].sum(),
+                                "Transações": resto["Transações"].sum()}])
+        tabela = pd.concat([tabela.iloc[:n], outros])
+    total = tabela["Total"].sum()
+    tabela["% da categoria"] = tabela["Total"] / total * 100 if total else 0
+    return tabela[["Fornecedor", "Total", "Transações", "% da categoria"]].reset_index(drop=True)
 
 
 # ============================================================================
@@ -428,6 +531,7 @@ def ler_fatura_bb(texto, conta="BB Cartão"):
             ano = data_fech.year if (int(mes), int(dia)) <= (data_fech.month, data_fech.day) \
                 else data_fech.year - 1
             data = pd.Timestamp(year=ano, month=int(mes), day=int(dia))
+        fornecedor = fornecedor_da_fatura(descricao)
         descricao = re.sub(r"\s+BR$", "", re.sub(r"\s+", " ", descricao))
         if valor > 0:
             categoria = CATEGORIA_ESTORNO
@@ -436,9 +540,9 @@ def ler_fatura_bb(texto, conta="BB Cartão"):
             if categoria == "TRANSFERÊNCIA":
                 categoria = CATEGORIA_PADRAO
         linhas.append({"Data": data, "Descrição": descricao, "Valor": valor,
-                       "Categoria": categoria})
+                       "Categoria": categoria, "Fornecedor": fornecedor})
 
-    t = pd.DataFrame(linhas, columns=["Data", "Descrição", "Valor", "Categoria"])
+    t = pd.DataFrame(linhas, columns=["Data", "Descrição", "Valor", "Categoria", "Fornecedor"])
     t["Tipo"] = ["Entrada" if v > 0 else "Saída" for v in t["Valor"]]
     t["Conta"] = conta
     t["Mês"] = t["Data"].dt.to_period("M").astype(str)
@@ -526,7 +630,7 @@ def consolidar(tabelas, nome_titular=""):
     tabelas = [x for x in tabelas if not x.empty]
     if not tabelas:
         return pd.DataFrame(columns=["Data", "Descrição", "Valor", "Tipo", "Categoria",
-                                     "Conta", "Mês"])
+                                     "Fornecedor", "Conta", "Mês"])
     for n, x in enumerate(tabelas):
         x["_arquivo"] = n
     t = pd.concat(tabelas, ignore_index=True)

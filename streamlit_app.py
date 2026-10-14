@@ -13,6 +13,7 @@ from financeiro import (
     formatar_reais,
     montar_transacoes,
     resumo_categorias,
+    resumo_fornecedores,
     resumo_mensal,
 )
 
@@ -20,18 +21,46 @@ from financeiro import (
 # CONFIGURAÇÃO DO APP
 # ============================================================================
 st.set_page_config(
-    page_title="Sistema Financeiro PJ",
-    page_icon="💰",
+    page_title="Sistema de Controle Financeiro",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Cores dos gráficos (paleta categórica validada para daltonismo: slots 1 e 2)
-COR_ENTRADAS = "#2a78d6"   # azul
-COR_SAIDAS = "#eb6834"     # laranja
+# Identidade visual: azul-marinho, dourado e branco-osso (tema em .streamlit/config.toml)
+MARINHO = "#1b2a4a"
+DOURADO = "#c9a227"        # detalhes (linhas, bordas); não usado em dados
+# Cores dos gráficos: marinho e dourado ajustados para contraste >= 3:1 no
+# branco-osso e separação para daltonismo (validados)
+COR_ENTRADAS = "#24529e"   # azul-marinho
+COR_SAIDAS = "#a8801f"     # dourado escuro
 
-st.title("💰 Sistema de Controle Financeiro - PJ/Autônomo")
-st.markdown("Importe o extrato bancário e veja para onde vai o seu dinheiro")
+st.markdown(f"""
+<style>
+  .cabecalho {{ border-bottom: 2px solid {DOURADO}; padding-bottom: .4rem; margin-bottom: 1.2rem; }}
+  .cabecalho h1 {{ color: {MARINHO}; font-weight: 700; margin: 0; padding: 0; }}
+  .cabecalho .slogan {{ text-align: right; color: #8a6d1d; font-style: italic;
+                        font-size: 1.05rem; margin: 0; letter-spacing: .02em; }}
+  [data-testid="stMetric"] {{ background: #fffdf8; border: 1px solid #e3d9c3;
+                              border-left: 4px solid {DOURADO}; border-radius: 8px;
+                              padding: .7rem 1rem; }}
+  [data-testid="stMetricLabel"] p {{ color: #5b6478; }}
+  [data-testid="stMetricValue"] {{ font-size: 1.55rem; }}
+  h2, h3 {{ color: {MARINHO}; }}
+  .dica {{ color: #7a6a45; font-size: .85rem; margin: -.3rem 0 .6rem 0; }}
+  .dica::before {{ content: "☝ "; color: {DOURADO}; }}
+  [data-testid="stSidebar"] {{ border-right: 2px solid {DOURADO}; }}
+</style>
+<div class="cabecalho">
+  <h1>Sistema de Controle Financeiro</h1>
+  <p class="slogan">Seus gastos na palma da mão</p>
+</div>
+""", unsafe_allow_html=True)
+
+
+def dica(texto):
+    """Observação discreta indicando que o elemento é interativo."""
+    st.markdown(f'<p class="dica">{texto}</p>', unsafe_allow_html=True)
 
 
 # Eixos em formato brasileiro: 1.500 em vez de 1,500
@@ -251,9 +280,23 @@ with tab1:
         st.info("Não há saídas no período.")
     else:
         st.subheader("Saídas por categoria")
+        dica("Passe o mouse sobre as barras para ver os valores")
         st.altair_chart(grafico_categorias(cats), width="stretch")
-        st.dataframe(tabela_em_reais(cats, ["Total"], ["% das saídas"]),
-                     hide_index=True, width="stretch")
+        dica("Clique numa categoria para ver os maiores fornecedores · "
+             "clique no título de uma coluna para classificar")
+        selecao = st.dataframe(tabela_em_reais(cats, ["Total"], ["% das saídas"]),
+                               hide_index=True, width="stretch", key="tabela_categorias",
+                               on_select="rerun", selection_mode="single-row")
+
+        linhas = selecao.selection.rows if selecao else []
+        if linhas:
+            categoria = cats.iloc[linhas[0]]["Categoria"]
+            forn = resumo_fornecedores(df, categoria)
+            st.subheader(f"Fornecedores — {categoria.capitalize()}")
+            st.caption(f"Os {min(10, len(forn))} que mais receberam nesta categoria; "
+                       "os demais somados em \"Outros fornecedores\".")
+            st.dataframe(tabela_em_reais(forn, ["Total"], ["% da categoria"]),
+                         hide_index=True, width="stretch")
 
         outros = cats.loc[cats["Categoria"] == "OUTRO", "% das saídas"]
         if not outros.empty and outros.iloc[0] > 20:
@@ -275,6 +318,7 @@ with tab1:
 with tab2:
     mensal = resumo_mensal(df)
     st.subheader("Entradas × Saídas por mês")
+    dica("Passe o mouse sobre as barras para ver os valores")
     st.altair_chart(grafico_mensal(mensal), width="stretch")
     st.dataframe(tabela_em_reais(mensal.assign(Mês=mensal["Mês"].map(rotulo_mes)),
                                  ["Entradas", "Saídas", "Saldo"]),
@@ -301,8 +345,9 @@ with tab3:
     if busca:
         visao = visao[visao["Descrição"].str.contains(busca, case=False, regex=False)]
     st.caption(f"{len(visao)} transações — total {formatar_reais(visao['Valor'].sum())}")
+    dica("Clique no título de uma coluna para classificar · use os filtros acima para refinar")
     st.dataframe(
-        visao[["Data", "Conta", "Descrição", "Valor", "Tipo", "Categoria"]],
+        visao[["Data", "Conta", "Fornecedor", "Descrição", "Valor", "Tipo", "Categoria"]],
         hide_index=True, width="stretch",
         column_config={
             "Data": st.column_config.DateColumn(format="DD/MM/YYYY"),
