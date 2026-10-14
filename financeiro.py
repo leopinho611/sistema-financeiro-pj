@@ -7,8 +7,10 @@ Separado da interface (streamlit_app.py) para poder ser testado sem o Streamlit.
 import io
 import re
 import unicodedata
+import warnings
 
 import pandas as pd
+from pypdf import PdfReader
 
 # ============================================================================
 # CATEGORIAS
@@ -16,31 +18,60 @@ import pandas as pd
 # A ordem importa: a primeira categoria que casar vence. TRANSFERÊNCIA fica por
 # último porque "PIX RESTAURANTE X" deve cair em ALIMENTAÇÃO, não em transferência.
 # Palavras sem acento e em minúsculas; casam como palavra inteira (com plural "s").
+# Terminada em "*", casa com o começo da palavra: "amazon*" pega "AMAZONMKTPLC".
 CATEGORIAS = {
     "CASA": ["aluguel", "condominio", "agua", "luz", "energia", "cosern", "caern",
-             "gas", "internet", "telefone", "celular", "claro", "vivo", "tim"],
-    "TRANSPORTE": ["combustivel", "gasolina", "etanol", "posto", "estacionamento",
-                   "uber", "onibus", "pedagio", "ipva", "detran", "shell", "ipiranga"],
+             "gas", "internet", "telefone", "celular", "claro", "vivo", "tim",
+             "leroy merlin", "ferreira cost*", "tok stok", "casas bahia"],
+    "TRANSPORTE": ["combustivel", "gasolina", "etanol", "posto*", "estacionamento",
+                   "uber*", "99 ride", "99app", "onibus", "pedagio", "ipva", "detran",
+                   "shell", "ipiranga", "youse", "seguro auto"],
     "ALIMENTAÇÃO": ["restaurante", "lanchonete", "comida", "mercado", "supermercado",
-                    "padaria", "delivery", "ifood", "rappi", "acougue", "hortifruti",
-                    "nordestao", "carrefour", "atacadao", "assai", "pizzaria"],
-    "SAÚDE": ["farmacia", "drogaria", "medico", "clinica", "dentista", "hospital",
-              "laboratorio", "academia", "unimed", "hapvida", "plano de saude"],
-    "EDUCAÇÃO": ["escola", "faculdade", "universidade", "curso", "livro", "livraria"],
-    "LAZER": ["cinema", "teatro", "show", "viagem", "hotel", "airbnb", "netflix",
-              "spotify", "ingresso"],
-    "SHOPPING": ["roupa", "sapato", "loja", "vestuario", "shopping", "magazine",
-                 "amazon", "mercadolivre", "shopee", "renner", "riachuelo"],
-    "INVESTIMENTO": ["fii", "acao", "acoes", "tesouro", "cdb", "lci", "lca",
-                     "aplicacao", "bitcoin", "corretora"],
-    "IMPOSTO": ["irpf", "irpj", "icms", "pis", "cofins", "iss", "inss", "darf",
-                "gps", "csll", "simples nacional"],
+                    "padaria", "panificadora", "pao", "delivery", "ifood", "rappi",
+                    "acougue", "carnes", "frios", "hortifruti", "sacolao", "nordestao",
+                    "carrefour", "atacadao", "assai", "favorito", "pizzaria", "bolo",
+                    "camaroes", "queijo", "gelateria", "sorveteria", "crepe*", "cafe",
+                    "cafeteria", "burger*", "hamburgueria"],
+    "SAÚDE": ["farmacia", "drogaria", "pague menos", "drogasil", "raia", "medico",
+              "clinica", "dentista", "hospital", "laboratorio", "academia", "wellhub",
+              "gympass", "unimed", "hapvida", "plano de saude", "barbearia", "estetica"],
+    "EDUCAÇÃO": ["escola", "faculdade", "universidade", "curso", "livro", "livraria",
+                 "papelaria", "papelpapelar*"],
+    "ASSINATURAS": ["netflix", "spotify", "anthropic*", "claude", "openai", "chatgpt",
+                    "youtube", "disney*", "hbo", "prime video", "globoplay",
+                    "deezer", "apple com", "icloud", "google one", "microsoft", "adobe"],
+    "LAZER": ["cinema", "teatro", "show", "viagem", "hotel", "airbnb", "booking",
+              "ingresso", "gol linhas", "latam", "azul linhas", "zupper", "decolar",
+              "aquario"],
+    "SHOPPING": ["roupa", "sapato", "loja", "lojas", "vestuario", "shopping", "magazine",
+                 "amazon*", "mercadolivre", "mercado livre", "shopee", "shein",
+                 "renner", "riachuelo", "baby"],
+    "IMPOSTOS E TAXAS": ["irpf", "irpj", "icms", "pis", "cofins", "iss", "inss", "darf",
+                         "gps", "csll", "simples nacional", "gru", "sefaz", "pref mun",
+                         "prefeitura", "receita federal", "rfb", "iptu",
+                         "conselho regional"],
     "TARIFAS BANCÁRIAS": ["tarifa", "iof", "juros", "anuidade", "cesta", "encargo",
                           "multa"],
     "TRANSFERÊNCIA": ["pix", "ted", "doc", "transferencia", "transf"],
 }
 CATEGORIA_ENTRADA = "RECEITA"
 CATEGORIA_PADRAO = "OUTRO"
+CATEGORIA_ESTORNO = "ESTORNO"
+CATEGORIA_CARTAO = "CARTÃO DE CRÉDITO"   # pagamento de fatura quando a fatura não foi importada
+
+# Movimentações internas: o dinheiro continua seu, só muda de lugar.
+# Não contam como entrada nem saída.
+CATEGORIA_APLICACAO = "APLICAÇÃO/RESGATE"
+CATEGORIA_FATURA = "PAGAMENTO DE FATURA"
+CATEGORIA_ENTRE_CONTAS = "TRANSFERÊNCIA ENTRE CONTAS"
+CATEGORIAS_INTERNAS = {CATEGORIA_APLICACAO, CATEGORIA_FATURA, CATEGORIA_ENTRE_CONTAS}
+
+PALAVRAS_APLICACAO = ["rende facil", "rdb", "nu reserva", "valor mensal programado",
+                      "caixinha", "poupanca", "aplicacao", "resgate", "fii", "acao",
+                      "acoes", "tesouro", "cdb", "lci", "lca", "corretora", "bitcoin"]
+PALAVRAS_FATURA = ["pagto cartao", "pagamento de fatura", "pagamento fatura",
+                   "pgto fatura", "fatura do cartao", "fatura cartao"]
+PADRAO_TRANSFERENCIA = re.compile(r"\b(?:pix|ted|doc|transf|transferencia)")
 
 # Linhas de saldo não são transações (aparecem em quase todo extrato brasileiro;
 # o BB escreve "S A L D O", por isso a comparação também é feita sem espaços)
@@ -56,20 +87,33 @@ def normalizar(texto):
     """Minúsculas, sem acentos e com espaços simples."""
     sem_acento = unicodedata.normalize("NFKD", str(texto))
     sem_acento = "".join(c for c in sem_acento if not unicodedata.combining(c))
-    return re.sub(r"\s+", " ", sem_acento.lower()).strip()
+    return re.sub(r"\s+", " ", re.sub(r"[.&*@/]", " ", sem_acento.lower())).strip()
 
 
-_PADROES = {
-    categoria: re.compile(r"\b(?:" + "|".join(re.escape(p) for p in palavras) + r")s?\b")
-    for categoria, palavras in CATEGORIAS.items()
-}
+def _padrao(palavras):
+    partes = [re.escape(p[:-1]) + r"\w*" if p.endswith("*") else re.escape(p) + r"s?\b"
+              for p in palavras]
+    return re.compile(r"\b(?:" + "|".join(partes) + r")")
+
+
+_PADROES = {categoria: _padrao(palavras) for categoria, palavras in CATEGORIAS.items()}
+_PADRAO_APLICACAO = _padrao(PALAVRAS_APLICACAO)
+_PADRAO_FATURA = _padrao(PALAVRAS_FATURA)
 
 
 def categorizar(descricao, valor=None):
-    """Categoria de uma transação. Entradas (valor > 0) viram RECEITA."""
+    """Categoria de uma transação. Entradas (valor > 0) viram RECEITA.
+
+    Aplicações/resgates e pagamento de fatura são identificados primeiro,
+    nos dois sentidos, porque são movimentações internas.
+    """
+    texto = normalizar(descricao)
+    if _PADRAO_APLICACAO.search(texto):
+        return CATEGORIA_APLICACAO
+    if _PADRAO_FATURA.search(texto):
+        return CATEGORIA_FATURA
     if valor is not None and valor > 0:
         return CATEGORIA_ENTRADA
-    texto = normalizar(descricao)
     for categoria, padrao in _PADROES.items():
         if padrao.search(texto):
             return categoria
@@ -126,8 +170,13 @@ def _nomes_unicos(nomes):
 
 def ler_extrato(nome, conteudo):
     """Lê CSV ou XLSX de qualquer banco e devolve um DataFrame com o cabeçalho certo."""
-    if nome.lower().endswith((".xlsx", ".xls")):
-        bruto = pd.read_excel(io.BytesIO(conteudo), header=None, dtype=object)
+    if nome.lower().endswith((".xlsx", ".xls", ".excel")) or conteudo[:2] == b"PK":
+        # O BB exporta XLSX com extensão ".excel"; XLSX sempre começa com "PK"
+        with warnings.catch_warnings():
+            # O Excel do BB não tem estilo padrão; o aviso do openpyxl é inofensivo
+            warnings.simplefilter("ignore", UserWarning)
+            bruto = pd.read_excel(io.BytesIO(conteudo), header=None, dtype=object,
+                                  engine="openpyxl")
     else:
         try:
             texto = conteudo.decode("utf-8-sig")
@@ -267,8 +316,14 @@ def detectar_colunas(df):
 # ============================================================================
 # MONTAGEM DAS TRANSAÇÕES
 # ============================================================================
-def montar_transacoes(df, colunas):
-    """Gera a tabela padronizada: Data, Descrição, Valor, Tipo, Categoria, Mês."""
+def definir_tipo(categoria, valor):
+    if categoria in CATEGORIAS_INTERNAS:
+        return "Interna"
+    return "Entrada" if valor > 0 else "Saída"
+
+
+def montar_transacoes(df, colunas, conta=""):
+    """Gera a tabela padronizada: Data, Descrição, Valor, Tipo, Categoria, Conta, Mês."""
     if not colunas.get("data") or not colunas.get("descricao"):
         raise ValueError("Escolha as colunas de data e de descrição.")
 
@@ -292,15 +347,16 @@ def montar_transacoes(df, colunas):
     t = t[t["Valor"] != 0]
     t = t[~t["Descrição"].map(eh_linha_de_saldo)]
 
-    t["Tipo"] = t["Valor"].map(lambda v: "Entrada" if v > 0 else "Saída")
     t["Categoria"] = [categorizar(d, v) for d, v in zip(t["Descrição"], t["Valor"])]
+    t["Tipo"] = [definir_tipo(c, v) for c, v in zip(t["Categoria"], t["Valor"])]
+    t["Conta"] = conta
     t["Mês"] = t["Data"].dt.to_period("M").astype(str)
     return t.sort_values("Data").reset_index(drop=True)
 
 
 def resumo_categorias(t):
     """Total de saídas por categoria (valores positivos), do maior para o menor."""
-    saidas = t[t["Valor"] < 0]
+    saidas = t[t["Tipo"] == "Saída"]
     tabela = (saidas.groupby("Categoria")["Valor"].agg(["sum", "count"])
               .rename(columns={"sum": "Total", "count": "Transações"}))
     tabela["Total"] = -tabela["Total"]
@@ -311,11 +367,185 @@ def resumo_categorias(t):
 
 def resumo_mensal(t):
     """Entradas, saídas e saldo por mês."""
-    entradas = t[t["Valor"] > 0].groupby("Mês")["Valor"].sum()
-    saidas = -t[t["Valor"] < 0].groupby("Mês")["Valor"].sum()
+    entradas = t[t["Tipo"] == "Entrada"].groupby("Mês")["Valor"].sum()
+    saidas = -t[t["Tipo"] == "Saída"].groupby("Mês")["Valor"].sum()
     tabela = pd.DataFrame({"Entradas": entradas, "Saídas": saidas}).fillna(0)
     tabela["Saldo"] = tabela["Entradas"] - tabela["Saídas"]
     return tabela.sort_index().reset_index().rename(columns={"index": "Mês"})
+
+
+# ============================================================================
+# FATURA DE CARTÃO DO BB (PDF)
+# ============================================================================
+# Seções da fatura do BB que já dizem a categoria
+SECOES_FATURA_BB = {
+    "supermercados": "ALIMENTAÇÃO",
+    "restaurantes": "ALIMENTAÇÃO",
+    "transporte": "TRANSPORTE",
+    "vestuario": "SHOPPING",
+    "viagens": "LAZER",
+    "lazer": "LAZER",
+    "saude": "SAÚDE",
+    "educacao": "EDUCAÇÃO",
+}
+_LINHA_FATURA = re.compile(r"^(\d{2})/(\d{2})\s+(.+?)\s+R\$\s*(-?[\d.]+,\d{2})\s*$")
+
+
+def eh_fatura_bb(texto):
+    return "Lançamentos nesta fatura" in texto and "Total da Fatura" in texto
+
+
+def ler_fatura_bb(texto, conta="BB Cartão"):
+    """Lê as compras de uma fatura do cartão BB (texto extraído do PDF).
+
+    O pagamento da fatura anterior é ignorado (já aparece na conta corrente).
+    Parcelas usam a data de fechamento da fatura, porque a data impressa é a
+    da compra original, que pode ser de meses atrás.
+    """
+    fechamento = re.search(r"Fatura fechada em (\d{2}/\d{2}/\d{4})", texto)
+    if not fechamento:
+        raise ValueError("Fatura sem data de fechamento.")
+    data_fech = pd.to_datetime(fechamento.group(1), format="%d/%m/%Y")
+
+    inicio = texto.find("Lançamentos nesta fatura")
+    fim = texto.find("Total da Fatura", inicio)
+    secao = None
+    linhas = []
+    for linha in texto[inicio:fim].splitlines():
+        conteudo = linha.strip()
+        m = _LINHA_FATURA.match(conteudo)
+        if not m:
+            if conteudo and len(conteudo) < 40 and not re.search(r"\d", conteudo):
+                secao = normalizar(conteudo)  # cabeçalho de seção ("Supermercados")
+            continue
+        dia, mes, descricao, valor = m.groups()
+        if normalizar(descricao).startswith("pgto"):
+            continue  # pagamento da fatura anterior
+        valor = -converter_valor(valor)  # compra = saída (negativo); estorno = positivo
+        if re.search(r"\bPARC \d{2}/\d{2}\b", descricao):
+            data = data_fech
+        else:
+            ano = data_fech.year if (int(mes), int(dia)) <= (data_fech.month, data_fech.day) \
+                else data_fech.year - 1
+            data = pd.Timestamp(year=ano, month=int(mes), day=int(dia))
+        descricao = re.sub(r"\s+BR$", "", re.sub(r"\s+", " ", descricao))
+        if valor > 0:
+            categoria = CATEGORIA_ESTORNO
+        else:
+            categoria = SECOES_FATURA_BB.get(secao) or categorizar(descricao, valor)
+            if categoria == "TRANSFERÊNCIA":
+                categoria = CATEGORIA_PADRAO
+        linhas.append({"Data": data, "Descrição": descricao, "Valor": valor,
+                       "Categoria": categoria})
+
+    t = pd.DataFrame(linhas, columns=["Data", "Descrição", "Valor", "Categoria"])
+    t["Tipo"] = ["Entrada" if v > 0 else "Saída" for v in t["Valor"]]
+    t["Conta"] = conta
+    t["Mês"] = t["Data"].dt.to_period("M").astype(str)
+    return t
+
+
+# ============================================================================
+# CARREGAMENTO DE VÁRIOS ARQUIVOS
+# ============================================================================
+def identificar_conta(nome, colunas=()):
+    """Nome da conta a partir do nome do arquivo ou do formato do extrato."""
+    n = normalizar(nome)
+    if n.startswith("nu_") or "nubank" in n:
+        return "Nubank"
+    if {"Lançamento", "Detalhes"} <= set(colunas):
+        return "BB Conta"
+    if re.search(r"\b(bb|banco do brasil)\b", n):
+        return "BB Conta"
+    base = re.sub(r"\.[a-z]+$", "", nome)
+    return re.sub(r"[\d_\-\s]+$", "", base).strip() or base
+
+
+def carregar_arquivo(nome, conteudo):
+    """Lê um arquivo enviado.
+
+    Retorna {"tipo": "tabela", "bruto": DataFrame, "conta": str} para extratos
+    em CSV/Excel (as colunas ainda precisam ser identificadas) ou
+    {"tipo": "transacoes", "dados": DataFrame, "conta": str} para faturas em PDF.
+    """
+    ext = nome.lower().rsplit(".", 1)[-1]
+    if ext == "ofx":
+        raise ValueError("arquivo OFX ainda não é lido; envie o CSV do mesmo período.")
+    if ext == "pdf" or conteudo[:4] == b"%PDF":
+        texto = "\n".join(p.extract_text() or "" for p in PdfReader(io.BytesIO(conteudo)).pages)
+        if eh_fatura_bb(texto):
+            return {"tipo": "transacoes", "dados": ler_fatura_bb(texto), "conta": "BB Cartão"}
+        raise ValueError("PDF não reconhecido (só a fatura do cartão BB é lida em PDF); "
+                         "envie o extrato em CSV ou Excel.")
+    bruto = ler_extrato(nome, conteudo)
+    return {"tipo": "tabela", "bruto": bruto, "conta": identificar_conta(nome, bruto.columns)}
+
+
+def _marcar_transferencias_entre_contas(t, dias=2):
+    """Pix/TED que sai de uma conta sua e entra em outra conta sua no mesmo valor."""
+    candidatas = t[(t["Tipo"] != "Interna")
+                   & ~t["Conta"].str.contains("Cartão")
+                   & t["Descrição"].map(lambda d: bool(PADRAO_TRANSFERENCIA.search(normalizar(d))))]
+    saidas = candidatas[candidatas["Valor"] < 0].sort_values("Data")
+    entradas = candidatas[candidatas["Valor"] > 0]
+    usadas = set()
+    for i, s in saidas.iterrows():
+        par = entradas[(entradas["Conta"] != s["Conta"])
+                       & (entradas["Valor"].round(2) == round(-s["Valor"], 2))
+                       & ((entradas["Data"] - s["Data"]).abs() <= pd.Timedelta(days=dias))
+                       & ~entradas.index.isin(usadas)]
+        if len(par):
+            j = (par["Data"] - s["Data"]).abs().idxmin()
+            usadas.add(j)
+            t.loc[[i, j], "Categoria"] = CATEGORIA_ENTRE_CONTAS
+            t.loc[[i, j], "Tipo"] = "Interna"
+    return t
+
+
+def _marcar_transferencias_para_si(t, nome_titular):
+    """Pix/TED para (ou de) você mesmo em outro banco: dinheiro continua seu."""
+    nome = normalizar(nome_titular)
+    if len(nome.split()) < 2:
+        return t  # exige nome e sobrenome para não pegar homônimos
+    alvo = (t["Tipo"] != "Interna") & ~t["Conta"].str.contains("Cartão") & t["Descrição"].map(
+        lambda d: nome in normalizar(d) and bool(PADRAO_TRANSFERENCIA.search(normalizar(d))))
+    t.loc[alvo, "Categoria"] = CATEGORIA_ENTRE_CONTAS
+    t.loc[alvo, "Tipo"] = "Interna"
+    return t
+
+
+def consolidar(tabelas, nome_titular=""):
+    """Junta as transações de vários arquivos e trata o que envolve mais de uma conta.
+
+    - Remove duplicatas entre arquivos (o mesmo período enviado duas vezes)
+    - Marca transferências entre as suas contas como movimentação interna
+    - Pix/TED para o próprio titular (nome informado) também é interno
+    - Pagamento de fatura só é interno se a fatura do cartão foi enviada;
+      senão ele é a única informação do gasto e conta como saída
+    """
+    tabelas = [x for x in tabelas if not x.empty]
+    if not tabelas:
+        return pd.DataFrame(columns=["Data", "Descrição", "Valor", "Tipo", "Categoria",
+                                     "Conta", "Mês"])
+    for n, x in enumerate(tabelas):
+        x["_arquivo"] = n
+    t = pd.concat(tabelas, ignore_index=True)
+
+    # Duplicatas: mantém, para cada lançamento, a maior quantidade vista num mesmo arquivo
+    chave = ["Conta", "Data", "Descrição", "Valor"]
+    t["_ocorrencia"] = t.groupby(chave + ["_arquivo"]).cumcount()
+    t = t.drop_duplicates(subset=chave + ["_ocorrencia"]).drop(columns=["_arquivo", "_ocorrencia"])
+    t = t.reset_index(drop=True)
+
+    if not t["Conta"].str.contains("Cartão").any():
+        fatura = t["Categoria"] == CATEGORIA_FATURA
+        t.loc[fatura, "Categoria"] = CATEGORIA_CARTAO
+        t.loc[fatura, "Tipo"] = [definir_tipo(CATEGORIA_CARTAO, v) for v in t.loc[fatura, "Valor"]]
+
+    t = _marcar_transferencias_entre_contas(t)
+    if nome_titular:
+        t = _marcar_transferencias_para_si(t, nome_titular)
+    return t.sort_values(["Data", "Conta"]).reset_index(drop=True)
 
 
 def formatar_reais(v):

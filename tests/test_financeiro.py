@@ -52,9 +52,15 @@ def test_converter_valor(entrada, esperado):
     ("POSTO IPIRANGA", "TRANSPORTE"),
     ("COSERN CONTA DE LUZ", "CASA"),
     ("TARIFA PACOTE SERVIÇOS", "TARIFAS BANCÁRIAS"),
-    ("PAGAMENTO DARF", "IMPOSTO"),
+    ("PAGAMENTO DARF", "IMPOSTOS E TAXAS"),
+    ("AMAZONMKTPLC*AMANASTOR SAO PAULO", "SHOPPING"),
+    ("PAO & CIA - LAGOA NOVA NATAL", "ALIMENTAÇÃO"),
+    ("ANTHROPIC* CLAUDE SUB", "ASSINATURAS"),
+    ("PostoMacaco PARNAMIRIM", "TRANSPORTE"),
     ("GASTOS DIVERSOS", "OUTRO"),        # "gas" não pode casar dentro de "gastos"
-    ("APLICACAO CDB", "INVESTIMENTO"),
+    ("APLICACAO CDB", "APLICAÇÃO/RESGATE"),
+    ("BB Rende Fácil - Rende Facil", "APLICAÇÃO/RESGATE"),
+    ("Pagto cartão crédito - VISA", "PAGAMENTO DE FATURA"),
     ("ALGO QUALQUER", "OUTRO"),
 ])
 def test_categorizar(descricao, categoria):
@@ -130,6 +136,7 @@ def test_resumos():
         "Descrição": ["a", "b", "c"],
         "Valor": [1000.0, -300.0, -100.0],
         "Categoria": ["RECEITA", "CASA", "LAZER"],
+        "Tipo": ["Entrada", "Saída", "Saída"],
         "Mês": ["2026-09", "2026-09", "2026-10"],
     })
     cats = resumo_categorias(t)
@@ -142,3 +149,109 @@ def test_resumos():
 def test_formatar_reais():
     assert formatar_reais(1234.5) == "R$ 1.234,50"
     assert formatar_reais(-10) == "-R$ 10,00"
+
+
+# ----------------------------------------------------------------------------
+# Fatura do cartão BB (texto como sai do PDF), vários arquivos e consolidação
+# ----------------------------------------------------------------------------
+TEXTO_FATURA = """Resumo da fatura
+Datas fatura
+Fatura fechada em 30/06/2026
+Lançamentos nesta fatura
+Data    D
+    Pagamentos/Créditos
+10/06     PGTO DEBITO CONTA 1234 000000001  200 BR R$ -1.000,00
+    Supermercados
+14/06     SUPERMERCADO EXEMPLO   NATAL BR R$ 45,00
+    Serviços
+25/06     NETFLIX.COM            SAO PAULO BR R$ 110,00
+02/02     LOJAS EXEMPLO          SAO PAULO BR R$ -50,00
+    Compras parceladas
+30/09     BABY STORE PARC 09/10  NATAL BR R$ 300,00
+Total da Fatura R$ 405,00
+"""
+
+
+def test_fatura_bb():
+    from financeiro import ler_fatura_bb
+    t = ler_fatura_bb(TEXTO_FATURA)
+    assert len(t) == 4                       # pagamento da fatura anterior ignorado
+    assert round(-t["Valor"].sum(), 2) == 405.00   # bate com o Total da Fatura
+    assert t["Categoria"].tolist() == ["ALIMENTAÇÃO", "ASSINATURAS", "ESTORNO", "SHOPPING"]
+    datas = t["Data"].dt.strftime("%d/%m/%Y").tolist()
+    # 02/02 é anterior ao fechamento em 30/06 -> mesmo ano; parcela usa o fechamento
+    assert datas == ["14/06/2026", "25/06/2026", "02/02/2026", "30/06/2026"]
+    assert set(t["Conta"]) == {"BB Cartão"}
+
+
+def _tabela(conta, linhas):
+    t = pd.DataFrame(linhas, columns=["Data", "Descrição", "Valor"])
+    t["Data"] = pd.to_datetime(t["Data"])
+    from financeiro import categorizar, definir_tipo
+    t["Categoria"] = [categorizar(d, v) for d, v in zip(t["Descrição"], t["Valor"])]
+    t["Tipo"] = [definir_tipo(c, v) for c, v in zip(t["Categoria"], t["Valor"])]
+    t["Conta"] = conta
+    t["Mês"] = t["Data"].dt.to_period("M").astype(str)
+    return t
+
+
+def test_consolidar_transferencia_entre_contas_e_rende_facil():
+    from financeiro import consolidar
+    nu = _tabela("Nubank", [
+        ("2026-09-08", "Transferência enviada pelo Pix - FULANO - BB", -500.0),
+        ("2026-09-09", "Transferência enviada pelo Pix - PADARIA", -20.0),
+    ])
+    bb = _tabela("BB Conta", [
+        ("2026-09-09", "Pix - Recebido - FULANO", 500.0),
+        ("2026-09-09", "BB Rende Fácil - Rende Facil", -480.0),
+    ])
+    t = consolidar([nu, bb])
+    internas = t[t["Tipo"] == "Interna"]
+    assert sorted(internas["Categoria"]) == [
+        "APLICAÇÃO/RESGATE", "TRANSFERÊNCIA ENTRE CONTAS", "TRANSFERÊNCIA ENTRE CONTAS"]
+    assert t.loc[t["Tipo"] == "Saída", "Valor"].tolist() == [-20.0]
+
+
+def test_pagamento_de_fatura_so_e_interno_com_a_fatura():
+    from financeiro import consolidar, ler_fatura_bb
+    conta = _tabela("BB Conta", [("2026-07-10", "Pagto cartão crédito - VISA", -405.00)])
+    sem_fatura = consolidar([conta.copy()])
+    assert sem_fatura["Categoria"].tolist() == ["CARTÃO DE CRÉDITO"]
+    assert sem_fatura["Tipo"].tolist() == ["Saída"]
+    com_fatura = consolidar([conta.copy(), ler_fatura_bb(TEXTO_FATURA)])
+    assert com_fatura.loc[com_fatura["Conta"] == "BB Conta", "Tipo"].tolist() == ["Interna"]
+
+
+def test_transferencia_para_o_proprio_titular():
+    from financeiro import consolidar
+    bb = _tabela("BB Conta", [
+        ("2026-09-01", "TED-Crédito em Conta - MARIA SILVA SANTOS", 4000.0),
+        ("2026-09-02", "Pix - Enviado - JOAO SOUZA", -100.0),
+    ])
+    t = consolidar([bb], nome_titular="Maria Silva")
+    assert t["Tipo"].tolist() == ["Interna", "Saída"]
+    # só o primeiro nome não basta (evita homônimos)
+    assert consolidar([bb], nome_titular="Maria")["Tipo"].tolist() == ["Entrada", "Saída"]
+
+
+def test_arquivo_enviado_duas_vezes_nao_duplica():
+    from financeiro import consolidar
+    linhas = [("2026-09-01", "CAFE", -5.0), ("2026-09-01", "CAFE", -5.0)]  # 2 cafés no dia
+    t = consolidar([_tabela("Nubank", linhas), _tabela("Nubank", linhas)])
+    assert len(t) == 2
+
+
+def test_excel_do_bb_com_extensao_excel():
+    from financeiro import carregar_arquivo
+    buf = io.BytesIO()
+    pd.DataFrame([["Data", "Lançamento", "Detalhes", "Valor"],
+                  ["01/09/2026", "Pagto Energia Elétrica", "COSERN", "-150,00"]]
+                 ).to_excel(buf, header=False, index=False)
+    r = carregar_arquivo("Extrato conta corrente - 092026.excel", buf.getvalue())
+    assert r["tipo"] == "tabela" and r["conta"] == "BB Conta"
+
+
+def test_ofx_e_pdf_desconhecido_dao_erro_claro():
+    from financeiro import carregar_arquivo
+    with pytest.raises(ValueError, match="OFX"):
+        carregar_arquivo("extrato.ofx", b"OFXHEADER:100")

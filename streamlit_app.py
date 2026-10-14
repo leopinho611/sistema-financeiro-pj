@@ -6,9 +6,11 @@ import pandas as pd
 import streamlit as st
 
 from financeiro import (
+    CATEGORIA_APLICACAO,
+    carregar_arquivo,
+    consolidar,
     detectar_colunas,
     formatar_reais,
-    ler_extrato,
     montar_transacoes,
     resumo_categorias,
     resumo_mensal,
@@ -100,90 +102,149 @@ def tabela_em_reais(df, colunas_reais, colunas_pct=()):
 # ============================================================================
 with st.sidebar:
     st.header("📁 Importar Dados")
-    arquivo = st.file_uploader(
-        "Escolha seu extrato bancário",
-        type=["csv", "xlsx"],
-        help="CSV ou XLSX de qualquer banco"
+    arquivos = st.file_uploader(
+        "Escolha seus extratos",
+        type=["csv", "xlsx", "xls", "excel", "pdf", "ofx"],
+        accept_multiple_files=True,
+        help="Extratos em CSV ou Excel de qualquer banco, de vários meses e contas. "
+             "Faturas do cartão BB também em PDF."
+    )
+    nome_titular = st.text_input(
+        "Seu nome (opcional)",
+        placeholder="Ex: Maria Silva",
+        help="Pix e TED para você mesmo em outro banco viram transferência entre "
+             "contas, e não gasto. Use nome e sobrenome como aparecem no extrato."
     )
 
 # ============================================================================
 # PROCESSAMENTO
 # ============================================================================
-if not arquivo:
+if not arquivos:
     st.info("👈 Clique em 'Importar Dados' no menu")
     st.markdown("""
     ## 🚀 Como Usar
-    1. Exporte seu extrato bancário (CSV ou XLSX) no app ou site do banco
-    2. Clique em 'Importar Dados' e selecione o arquivo
+    1. Exporte seus extratos (CSV ou Excel) no app ou site do banco.
+       Pode enviar vários meses e várias contas de uma vez.
+    2. Fatura do cartão BB: pode enviar o PDF
     3. Confira se as colunas foram identificadas certo
     4. Veja o resumo, o mês a mês e as transações categorizadas
+
+    **Movimentações internas** (aplicação/resgate automático, transferência entre
+    suas contas e pagamento de fatura do cartão) não contam como entrada nem saída.
     """)
     st.stop()
 
-try:
-    bruto = ler_extrato(arquivo.name, arquivo.getvalue())
-except Exception as e:
-    st.error(f"Não foi possível ler o arquivo: {e}")
-    st.stop()
-
-sugestao = detectar_colunas(bruto)
-opcoes = ["—"] + list(bruto.columns)
-
-
-def indice(coluna):
-    return opcoes.index(coluna) if coluna in opcoes else 0
-
-
-with st.expander("⚙️ Colunas do extrato", expanded=not (sugestao["data"] and sugestao["descricao"]
-                                                       and (sugestao["valor"] or sugestao["credito"]))):
-    st.caption("Identificadas automaticamente. Ajuste se algo estiver errado.")
-    c1, c2 = st.columns(2)
-    col_data = c1.selectbox("Data", opcoes, index=indice(sugestao["data"]))
-    col_desc = c2.multiselect("Descrição", list(bruto.columns), default=sugestao["descricao"],
-                              help="Pode escolher mais de uma coluna; o texto é juntado.")
-    modo = st.radio("Como o banco mostra os valores?",
-                    ["Uma coluna de valor (negativo = saída)",
-                     "Colunas separadas de crédito e débito"],
-                    index=1 if sugestao["credito"] else 0, horizontal=True)
-    if modo.startswith("Uma"):
-        col_valor = st.selectbox("Valor", opcoes, index=indice(sugestao["valor"]))
-        col_cred = col_deb = "—"
+tabelas = []
+leitura = []
+layouts = {}   # extratos com as mesmas colunas compartilham a identificação
+for arquivo in arquivos:
+    try:
+        r = carregar_arquivo(arquivo.name, arquivo.getvalue())
+    except Exception as e:
+        leitura.append({"Arquivo": arquivo.name, "Conta": "—", "Situação": f"⚠️ ignorado: {e}"})
+        continue
+    r["nome"] = arquivo.name
+    if r["tipo"] == "transacoes":
+        tabelas.append(r["dados"])
+        leitura.append({"Arquivo": arquivo.name, "Conta": r["conta"],
+                        "Situação": f"✅ {len(r['dados'])} lançamentos"})
     else:
-        c3, c4 = st.columns(2)
-        col_cred = c3.selectbox("Crédito (entradas)", opcoes, index=indice(sugestao["credito"]))
-        col_deb = c4.selectbox("Débito (saídas)", opcoes, index=indice(sugestao["debito"]))
-        col_valor = "—"
-    st.dataframe(bruto.head(5), width="stretch")
+        layouts.setdefault(tuple(r["bruto"].columns), []).append(r)
 
-colunas = {k: (None if v == "—" else v) for k, v in
-           {"data": col_data, "valor": col_valor,
-            "credito": col_cred, "debito": col_deb}.items()}
-colunas["descricao"] = col_desc
+for n, (cols, grupo) in enumerate(layouts.items()):
+    bruto0 = grupo[0]["bruto"]
+    sugestao = detectar_colunas(bruto0)
+    opcoes = ["—"] + list(cols)
 
-try:
-    df = montar_transacoes(bruto, colunas)
-except ValueError as e:
-    st.warning(f"⚠️ {e} (em '⚙️ Colunas do extrato', acima)")
+    def indice(coluna):
+        return opcoes.index(coluna) if coluna in opcoes else 0
+
+    completo = sugestao["data"] and sugestao["descricao"] and (sugestao["valor"] or sugestao["credito"])
+    nomes = ", ".join(r["nome"] for r in grupo)
+    with st.expander(f"⚙️ Colunas — {grupo[0]['conta']} ({len(grupo)} arquivo(s))",
+                     expanded=not completo):
+        st.caption(f"Identificadas automaticamente. Ajuste se algo estiver errado. Arquivos: {nomes}")
+        c1, c2 = st.columns(2)
+        col_data = c1.selectbox("Data", opcoes, index=indice(sugestao["data"]), key=f"data{n}")
+        col_desc = c2.multiselect("Descrição", list(cols), default=sugestao["descricao"],
+                                  help="Pode escolher mais de uma coluna; o texto é juntado.",
+                                  key=f"desc{n}")
+        modo = st.radio("Como o banco mostra os valores?",
+                        ["Uma coluna de valor (negativo = saída)",
+                         "Colunas separadas de crédito e débito"],
+                        index=1 if sugestao["credito"] else 0, horizontal=True, key=f"modo{n}")
+        if modo.startswith("Uma"):
+            col_valor = st.selectbox("Valor", opcoes, index=indice(sugestao["valor"]), key=f"valor{n}")
+            col_cred = col_deb = "—"
+        else:
+            c3, c4 = st.columns(2)
+            col_cred = c3.selectbox("Crédito (entradas)", opcoes,
+                                    index=indice(sugestao["credito"]), key=f"cred{n}")
+            col_deb = c4.selectbox("Débito (saídas)", opcoes,
+                                   index=indice(sugestao["debito"]), key=f"deb{n}")
+            col_valor = "—"
+        st.dataframe(bruto0.head(5), width="stretch")
+
+    colunas = {k: (None if v == "—" else v) for k, v in
+               {"data": col_data, "valor": col_valor,
+                "credito": col_cred, "debito": col_deb}.items()}
+    colunas["descricao"] = col_desc
+    for r in grupo:
+        try:
+            t = montar_transacoes(r["bruto"], colunas, r["conta"])
+            tabelas.append(t)
+            leitura.append({"Arquivo": r["nome"], "Conta": r["conta"],
+                            "Situação": f"✅ {len(t)} lançamentos"})
+        except ValueError as e:
+            leitura.append({"Arquivo": r["nome"], "Conta": r["conta"],
+                            "Situação": f"⚠️ {e} (ajuste em ⚙️ Colunas)"})
+
+todos = consolidar(tabelas, nome_titular)
+
+with st.expander(f"📂 Arquivos lidos ({len(arquivos)})",
+                 expanded=any("Colunas" in x["Situação"] for x in leitura)):
+    st.dataframe(pd.DataFrame(leitura), hide_index=True, width="stretch")
+
+if todos.empty:
+    st.warning("Nenhuma transação encontrada. Confira os arquivos e as colunas acima.")
     st.stop()
 
+# Filtros de conta e período
+with st.sidebar:
+    st.divider()
+    contas = sorted(todos["Conta"].unique())
+    filtro_contas = st.multiselect("Contas", contas, default=contas)
+    inicio, fim = todos["Data"].min().date(), todos["Data"].max().date()
+    periodo_sel = st.date_input("Período", value=(inicio, fim), min_value=inicio,
+                                max_value=fim, format="DD/MM/YYYY")
+
+df = todos[todos["Conta"].isin(filtro_contas)]
+if isinstance(periodo_sel, tuple) and len(periodo_sel) == 2:
+    df = df[(df["Data"].dt.date >= periodo_sel[0]) & (df["Data"].dt.date <= periodo_sel[1])]
 if df.empty:
-    st.warning("Nenhuma transação encontrada com essas colunas. Confira em '⚙️ Colunas do extrato'.")
+    st.warning("Nenhuma transação com esses filtros.")
     st.stop()
 
+internas = df[df["Tipo"] == "Interna"]
 periodo = f"{df['Data'].min():%d/%m/%Y} a {df['Data'].max():%d/%m/%Y}"
-st.success(f"✅ {len(df)} transações de {periodo}")
+st.success(f"✅ {len(df) - len(internas)} transações de {periodo} "
+           f"({len(internas)} movimentações internas à parte)")
 
-entradas = df.loc[df["Valor"] > 0, "Valor"].sum()
-saidas = -df.loc[df["Valor"] < 0, "Valor"].sum()
+entradas = df.loc[df["Tipo"] == "Entrada", "Valor"].sum()
+saidas = -df.loc[df["Tipo"] == "Saída", "Valor"].sum()
+aplicado = -internas.loc[internas["Categoria"] == CATEGORIA_APLICACAO, "Valor"].sum()
 
 tab1, tab2, tab3, tab4 = st.tabs(["📊 Resumo", "📅 Mês a Mês", "📋 Transações", "📥 Download"])
 
 # ----------------------------------------------------------------------------
 with tab1:
-    m1, m2, m3 = st.columns(3)
+    m1, m2, m3, m4 = st.columns(4)
     m1.metric("Entradas", formatar_reais(entradas))
     m2.metric("Saídas", formatar_reais(saidas))
     m3.metric("Saldo do período", formatar_reais(entradas - saidas))
+    m4.metric("Aplicado (líquido)", formatar_reais(aplicado),
+              help="Aplicações menos resgates no período (Rende Fácil, caixinhas, fundos...). "
+                   "Não entra em entradas nem saídas.")
 
     cats = resumo_categorias(df)
     if cats.empty:
@@ -199,6 +260,17 @@ with tab1:
             st.caption(f"ℹ️ {outros.iloc[0]:.0f}% das saídas ficaram em OUTRO. "
                        "Veja quais são na aba 📋 Transações.")
 
+    if not internas.empty:
+        st.subheader("Movimentações internas")
+        st.caption("Dinheiro que só mudou de lugar: não conta como entrada nem saída.")
+        resumo_int = (internas.groupby("Categoria")["Valor"]
+                      .agg(Lançamentos="count",
+                           Saiu=lambda v: -v[v < 0].sum(),
+                           Entrou=lambda v: v[v > 0].sum())
+                      .reset_index())
+        st.dataframe(tabela_em_reais(resumo_int, ["Saiu", "Entrou"]),
+                     hide_index=True, width="stretch")
+
 # ----------------------------------------------------------------------------
 with tab2:
     mensal = resumo_mensal(df)
@@ -210,7 +282,7 @@ with tab2:
 
     if len(mensal) > 1:
         st.subheader("Saídas por categoria em cada mês")
-        por_mes = (df[df["Valor"] < 0].assign(Total=lambda d: -d["Valor"])
+        por_mes = (df[df["Tipo"] == "Saída"].assign(Total=lambda d: -d["Valor"])
                    .pivot_table(index="Categoria", columns="Mês", values="Total",
                                 aggfunc="sum", fill_value=0))
         por_mes = por_mes.loc[por_mes.sum(axis=1).sort_values(ascending=False).index]
@@ -219,17 +291,18 @@ with tab2:
 
 # ----------------------------------------------------------------------------
 with tab3:
-    f1, f2 = st.columns(2)
+    f1, f2, f3 = st.columns([2, 2, 1])
     filtro_cat = f1.multiselect("Categoria", sorted(df["Categoria"].unique()))
     busca = f2.text_input("Buscar na descrição")
-    visao = df
+    ver_internas = f3.toggle("Mostrar internas", value=False)
+    visao = df if ver_internas else df[df["Tipo"] != "Interna"]
     if filtro_cat:
         visao = visao[visao["Categoria"].isin(filtro_cat)]
     if busca:
         visao = visao[visao["Descrição"].str.contains(busca, case=False, regex=False)]
     st.caption(f"{len(visao)} transações — total {formatar_reais(visao['Valor'].sum())}")
     st.dataframe(
-        visao[["Data", "Descrição", "Valor", "Tipo", "Categoria"]],
+        visao[["Data", "Conta", "Descrição", "Valor", "Tipo", "Categoria"]],
         hide_index=True, width="stretch",
         column_config={
             "Data": st.column_config.DateColumn(format="DD/MM/YYYY"),
