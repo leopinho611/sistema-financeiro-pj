@@ -24,7 +24,8 @@ CATEGORIAS = {
              "gas", "internet", "telefone", "celular", "claro", "vivo", "tim",
              "leroy merlin", "ferreira cost*", "tok stok", "casas bahia"],
     "TRANSPORTE": ["combustivel", "gasolina", "etanol", "posto*", "estacionamento",
-                   "uber*", "99 ride", "99app", "onibus", "pedagio", "ipva", "detran",
+                   "uber*", "99 ride", "99app", "99 tecnologia", "onibus", "pedagio",
+                   "ipva", "detran",
                    "shell", "ipiranga", "youse", "seguro auto", "sefaz",
                    "multa transito", "multa de transito", "licenciamento"],
     "ALIMENTAÇÃO": ["restaurante", "lanchonete", "comida", "mercado", "supermercado",
@@ -387,7 +388,7 @@ def resumo_mensal(t):
 # Mesmas regras de palavras de CATEGORIAS (palavra inteira; "*" = começo da palavra).
 SUBCATEGORIAS = {
     "ALIMENTAÇÃO": {
-        "Padaria": ["padaria", "panificadora", "pao", "bolo", "confeitaria"],
+        "Padaria": ["padaria", "panificadora", "pao", "bolo", "confeitaria", "doce*"],
         "Hortifruti e açougue": ["sacolao", "hortifruti", "feira", "acougue", "carnes",
                                  "frios", "queijo", "peixaria"],
         "Supermercado": ["supermercado*", "mercado", "favorito", "nordestao", "carrefour",
@@ -403,14 +404,17 @@ SUBCATEGORIAS = {
                            "bradesco saude"],
         "Academia": ["academia", "wellhub", "gympass", "crossfit", "pilates"],
         "Cuidados pessoais": ["barbearia", "salao", "cabeleireiro", "manicure", "estetica"],
-        "Clínicas e consultas": ["clinica", "clinic*", "medico", "dentista", "consultorio",
-                                 "laboratorio", "hospital", "psicolog*", "fisioterap*"],
+        "Clínicas, consultas e exames": ["clinica", "clinic*", "medico", "dentista",
+                                         "consultorio", "laboratorio", "hospital", "exame*",
+                                         "imagem", "diagnostic*", "radiolog*", "psicolog*",
+                                         "fisioterap*"],
     },
     "TRANSPORTE": {
         "Posto de gasolina": ["posto*", "combustivel", "gasolina", "etanol", "shell",
                               "ipiranga", "petrobras"],
         "Seguro": ["seguro*", "youse"],
-        "Transporte por aplicativo": ["uber*", "99 ride", "99app", "99pop", "indriver"],
+        "Transporte por aplicativo": ["uber*", "99 ride", "99app", "99pop", "99 tecnologia",
+                                      "indriver"],
         "Estacionamento": ["estacionamento*", "estapar", "zona azul"],
         "IPVA e multas": ["ipva", "sefaz", "detran", "licenciamento", "multa"],
     },
@@ -473,6 +477,148 @@ def subcategorizar(categoria, descricao, fornecedor="", secao=""):
     if categoria == "ALIMENTAÇÃO" and secao in SECOES_FATURA_SUB:
         return SECOES_FATURA_SUB[secao]
     return SUBCATEGORIA_OUTROS
+
+
+# ============================================================================
+# CNPJ E CNAE
+# ============================================================================
+_PADRAO_CNPJ = re.compile(r"\b(\d{2})\.?(\d{3})\.?(\d{3})/?(\d{4})-?(\d{2})\b")
+
+# CNAE principal (Receita Federal) -> categoria e subcategoria. Casa pelo começo
+# do código: o mais específico vence ("4721102" antes de "4721").
+CNAE_CATEGORIAS = {
+    "1091": ("ALIMENTAÇÃO", "Padaria"),
+    "4721102": ("ALIMENTAÇÃO", "Padaria"),
+    "4721104": ("ALIMENTAÇÃO", "Padaria"),          # doces, balas e semelhantes
+    "4721103": ("ALIMENTAÇÃO", "Hortifruti e açougue"),  # laticínios e frios
+    "4722": ("ALIMENTAÇÃO", "Hortifruti e açougue"),
+    "4724": ("ALIMENTAÇÃO", "Hortifruti e açougue"),
+    "4711": ("ALIMENTAÇÃO", "Supermercado"),
+    "4712": ("ALIMENTAÇÃO", "Supermercado"),
+    "4723": ("ALIMENTAÇÃO", "Supermercado"),
+    "4729": ("ALIMENTAÇÃO", "Supermercado"),
+    "5611": ("ALIMENTAÇÃO", "Restaurante"),
+    "5612": ("ALIMENTAÇÃO", "Restaurante"),
+    "5620": ("ALIMENTAÇÃO", "Restaurante"),
+    "4771": ("SAÚDE", "Drogaria"),
+    "6550": ("SAÚDE", "Plano de saúde"),
+    "86": ("SAÚDE", "Clínicas, consultas e exames"),
+    "9313": ("SAÚDE", "Academia"),
+    "9602": ("SAÚDE", "Cuidados pessoais"),
+    "4731": ("TRANSPORTE", "Posto de gasolina"),
+    "5223": ("TRANSPORTE", "Estacionamento"),
+    "4923": ("TRANSPORTE", "Transporte por aplicativo"),
+    "35": ("CASA", "Luz"),
+    "36": ("CASA", "Água"),
+    "4784": ("CASA", "Gás"),
+    "61": ("CASA", "Telefone e celular"),
+    "6190": ("CASA", "Internet"),
+    "8112": ("CASA", "Condomínio"),
+    "6822": ("CASA", "Aluguel"),
+    "4741": ("CASA", "Manutenções"),
+    "4742": ("CASA", "Manutenções"),
+    "4743": ("CASA", "Manutenções"),
+    "4744": ("CASA", "Manutenções"),
+    "43": ("CASA", "Manutenções"),
+    "4781": ("SHOPPING", "Vestuário"),
+    "4782": ("SHOPPING", "Vestuário"),
+    "4713": ("SHOPPING", "Outros"),
+    "4759": ("SHOPPING", "Outros"),
+    "4763": ("SHOPPING", "Outros"),
+    "4789": ("SHOPPING", "Outros"),
+    "5510": ("LAZER", "Viagens"),
+    "5590": ("LAZER", "Viagens"),
+    "5111": ("LAZER", "Viagens"),
+    "7911": ("LAZER", "Viagens"),
+    "5914": ("LAZER", "Passeios e eventos"),
+    "90": ("LAZER", "Passeios e eventos"),
+    "91": ("LAZER", "Passeios e eventos"),
+    "9329": ("LAZER", "Passeios e eventos"),
+    "85": ("EDUCAÇÃO", ""),
+    "4761": ("EDUCAÇÃO", ""),
+    "6911": ("SERVIÇOS", ""),
+    "6920": ("SERVIÇOS", ""),
+    "70": ("SERVIÇOS", ""),
+    "74": ("SERVIÇOS", ""),
+    "82": ("SERVIÇOS", ""),
+}
+
+
+def extrair_cnpj(descricao):
+    """CNPJ (só números) citado na descrição, ou None. CPF mascarado não casa."""
+    m = _PADRAO_CNPJ.search(str(descricao))
+    return "".join(m.groups()) if m else None
+
+
+def categoria_do_cnae(cnae):
+    """(categoria, subcategoria) para um CNAE, ou None se não houver mapeamento."""
+    codigo = re.sub(r"\D", "", str(cnae or ""))
+    for tamanho in range(len(codigo), 1, -1):
+        if codigo[:tamanho] in CNAE_CATEGORIAS:
+            return CNAE_CATEGORIAS[codigo[:tamanho]]
+    return None
+
+
+# ============================================================================
+# REGRAS (o app lembra as correções por fornecedor)
+# ============================================================================
+COLUNAS_REGRAS = ["chave", "fornecedor", "categoria", "subcategoria", "origem", "cnpj",
+                  "cnae", "atualizado_em"]
+
+
+def chave_fornecedor(fornecedor):
+    return normalizar(fornecedor)
+
+
+def categorias_editaveis():
+    """Categorias que o usuário pode escolher para uma saída."""
+    return list(CATEGORIAS) + [CATEGORIA_PADRAO]
+
+
+def subcategorias_de(categoria):
+    subs = list(SUBCATEGORIAS.get(categoria, {}))
+    return subs + [SUBCATEGORIA_OUTROS] if subs else [""]
+
+
+def aplicar_regras(t, regras):
+    """Aplica as regras às saídas do fornecedor (a regra vence as palavras-chave).
+
+    Casa pelo nome do fornecedor sem acento/maiúsculas, também quando o nome no
+    extrato vem cortado ou mais longo ("lc comercio" pega "lc comercio natal").
+    """
+    if regras is None or regras.empty or t.empty:
+        return t
+    t = t.copy()
+    regras = regras.drop_duplicates("chave", keep="last")
+    por_chave = {r.chave: r for r in regras.itertuples() if r.chave}
+    chaves = sorted(por_chave, key=len, reverse=True)
+    saidas = t["Tipo"] == "Saída"
+    for i in t.index[saidas]:
+        k = chave_fornecedor(t.at[i, "Fornecedor"])
+        regra = por_chave.get(k) or next(
+            (por_chave[c] for c in chaves if len(c) >= 5 and (k.startswith(c) or c.startswith(k)
+                                                              and len(k) >= 5)), None)
+        if regra is None:
+            continue
+        t.at[i, "Categoria"] = regra.categoria
+        sub = regra.subcategoria if isinstance(regra.subcategoria, str) else ""
+        validas = subcategorias_de(regra.categoria)
+        t.at[i, "Subcategoria"] = sub if sub in validas else validas[-1] if validas != [""] else ""
+    return t
+
+
+def eh_empresa(descricoes, contas):
+    """O fornecedor é empresa? (compra no cartão, boleto/débito ou CNPJ na descrição).
+
+    Pix para pessoas não entra nas regras compartilhadas, para não expor nomes.
+    """
+    for d, c in zip(descricoes, contas):
+        n = normalizar(d)
+        if "Cartão" in str(c) or extrair_cnpj(d) or n.startswith(("pagamento de boleto", "pagto",
+                                                                   "pagamento de", "compra",
+                                                                   "debito")):
+            return True
+    return False
 
 
 # ============================================================================

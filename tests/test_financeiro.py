@@ -363,3 +363,137 @@ def test_resumo_subcategorias_outros_por_ultimo():
     assert r["Subcategoria"].tolist() == ["Supermercado", "Restaurante", "Outros"]
     assert r["Total"].tolist() == [100.0, 50.0, 500.0]
     assert resumo_subcategorias(t.assign(Categoria="LAZER", Subcategoria=""), "LAZER").empty
+
+
+# ----------------------------------------------------------------------------
+# CNPJ, CNAE e regras lembradas
+# ----------------------------------------------------------------------------
+def test_extrair_cnpj():
+    from financeiro import extrair_cnpj
+    assert extrair_cnpj("Pix - LOJA - 12.345.678/0001-90 - BANCO") == "12345678000190"
+    assert extrair_cnpj("Pix - FULANA - •••.123.456-•• - BANCO") is None   # CPF mascarado
+
+
+@pytest.mark.parametrize("cnae, esperado", [
+    ("4721102", ("ALIMENTAÇÃO", "Padaria")),
+    (5611201, ("ALIMENTAÇÃO", "Restaurante")),
+    ("8640-2/05", ("SAÚDE", "Clínicas, consultas e exames")),
+    ("4711302", ("ALIMENTAÇÃO", "Supermercado")),
+    ("6920601", ("SERVIÇOS", "")),
+    ("0111301", None),
+    ("", None),
+])
+def test_categoria_do_cnae(cnae, esperado):
+    from financeiro import categoria_do_cnae
+    assert categoria_do_cnae(cnae) == esperado
+
+
+def _regras(linhas):
+    from regras import nova_regra
+    return pd.concat([nova_regra(*l) for l in linhas], ignore_index=True)
+
+
+def test_aplicar_regras_vence_palavras_chave_e_casa_nome_cortado():
+    from financeiro import aplicar_regras
+    t = pd.DataFrame({
+        "Fornecedor": ["Loja Exemplo", "Loja Exemplo Natal", "Outra", "Loja Exemplo"],
+        "Categoria": ["OUTRO", "OUTRO", "OUTRO", "RECEITA"],
+        "Subcategoria": ["", "", "", ""],
+        "Tipo": ["Saída", "Saída", "Saída", "Entrada"],
+        "Valor": [-10.0, -20.0, -5.0, 50.0],
+    })
+    regras = _regras([("loja exemplo", "Loja Exemplo", "ALIMENTAÇÃO", "Padaria", "usuario")])
+    r = aplicar_regras(t, regras)
+    assert r["Categoria"].tolist() == ["ALIMENTAÇÃO", "ALIMENTAÇÃO", "OUTRO", "RECEITA"]
+    assert r["Subcategoria"].tolist()[:2] == ["Padaria", "Padaria"]
+
+
+def test_regra_com_subcategoria_invalida_vira_outros():
+    from financeiro import aplicar_regras
+    t = pd.DataFrame({"Fornecedor": ["Loja X"], "Categoria": ["OUTRO"], "Subcategoria": [""],
+                      "Tipo": ["Saída"], "Valor": [-10.0]})
+    r = aplicar_regras(t, _regras([("loja x", "Loja X", "SAÚDE", "Padaria", "usuario")]))
+    assert (r["Categoria"].iat[0], r["Subcategoria"].iat[0]) == ("SAÚDE", "Outros")
+
+
+def test_eh_empresa():
+    from financeiro import eh_empresa
+    assert eh_empresa(["LOJA X NATAL"], ["BB Cartão"])
+    assert eh_empresa(["Transferência enviada pelo Pix - LOJA - 12.345.678/0001-90"], ["Nubank"])
+    assert not eh_empresa(["Transferência enviada pelo Pix - FULANA - •••.123.456-••"], ["Nubank"])
+
+
+def test_repositorio_local_salva_e_carrega(tmp_path, monkeypatch):
+    import regras
+    monkeypatch.setattr(regras, "ARQUIVO_LOCAL", tmp_path / "regras.csv")
+    repo = regras.RepositorioRegras()
+    assert repo.carregar().empty
+    novas = _regras([("loja x", "Loja X", "SAÚDE", "Drogaria", "usuario")])
+    assert repo.salvar(novas, "teste") == "local"
+    lidas = repo.carregar()
+    assert lidas[["chave", "categoria", "subcategoria"]].values.tolist() == \
+        [["loja x", "SAÚDE", "Drogaria"]]
+
+
+def test_repositorio_github_envia_commit(monkeypatch):
+    import base64
+    import json
+    import regras
+    chamadas = []
+
+    class Resposta:
+        def __init__(self, dados):
+            self.dados = dados
+
+        def read(self):
+            return json.dumps(self.dados).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def falso_urlopen(req, timeout):
+        chamadas.append((req.get_method(), req.full_url, req.data))
+        if req.get_method() == "GET":
+            csv = "chave,fornecedor,categoria,subcategoria\nantiga,Antiga,LAZER,Viagens\n"
+            return Resposta({"sha": "abc", "content": base64.b64encode(csv.encode()).decode()})
+        return Resposta({"content": {}})
+
+    monkeypatch.setattr(regras.urllib.request, "urlopen", falso_urlopen)
+    repo = regras.RepositorioRegras("token", "dono/repo", "main")
+    assert repo.carregar()["chave"].tolist() == ["antiga"]
+    juntas = regras.juntar(repo.carregar(), _regras([("nova", "Nova", "SAÚDE", "", "usuario")]))
+    assert repo.salvar(juntas, "Regras: Nova") == "github"
+    metodo, url, corpo = chamadas[-1]
+    enviado = json.loads(corpo)
+    assert metodo == "PUT" and url.endswith("/repos/dono/repo/contents/regras/regras_fornecedores.csv")
+    assert enviado["sha"] == "abc" and enviado["branch"] == "main"
+    assert "antiga" in base64.b64decode(enviado["content"]).decode()   # não apaga as antigas
+
+
+def test_consultar_cnpj_formata_resposta(monkeypatch):
+    import json
+    import regras
+
+    class Resposta:
+        def read(self):
+            return json.dumps({"razao_social": "LC COMERCIO LTDA", "nome_fantasia": "PADARIA X",
+                               "cnae_fiscal": 4721102,
+                               "cnae_fiscal_descricao": "Padaria e confeitaria"}).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(regras.urllib.request, "urlopen", lambda req, timeout: Resposta())
+    assert regras.consultar_cnpj("12345678000190") == {
+        "nome": "PADARIA X", "cnae": "4721102", "atividade": "Padaria e confeitaria"}
+
+    def falha(req, timeout):
+        raise OSError("sem rede")
+    monkeypatch.setattr(regras.urllib.request, "urlopen", falha)
+    assert regras.consultar_cnpj("12345678000190") is None

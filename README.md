@@ -12,7 +12,8 @@ Um aplicativo web que automatiza a categorização de extratos bancários e gera
 ✅ Mês a Mês - Entradas × saídas e categorias por mês  
 ✅ Tema claro ou escuro - Azul-marinho, dourado e branco-osso; troque em ⋮ → Settings (por padrão segue o aparelho)  
 ✅ Exportação - CSV (padrão Excel brasileiro) ou XLSX com abas de resumo  
-✅ Filtros - Por conta, período, categoria e busca na descrição
+✅ Filtros - Por conta, período, categoria e busca na descrição  
+✅ Classificar - Corrija a categoria por fornecedor e o app lembra; consulta de CNPJ na Receita com sugestão pelo CNAE
 📋 Categorias Suportadas
 Subcategorias: ALIMENTAÇÃO (Supermercado, Restaurante, Padaria, Hortifruti e açougue), SAÚDE (Drogaria, Plano de saúde, Academia, Cuidados pessoais, Clínicas e consultas), TRANSPORTE (Posto de gasolina, Seguro, Transporte por aplicativo, Estacionamento, IPVA e multas), CASA (Água, Luz, Internet, Gás, Condomínio, Aluguel, Telefone e celular, Manutenções), SHOPPING (Compras online, Vestuário, Infantil), LAZER (Viagens, Passeios e eventos), IMPOSTOS E TAXAS (Federais, Estaduais, Municipais, Conselho profissional), TARIFAS BANCÁRIAS (Anuidade do cartão, Pacote de serviços, IOF e juros); o que não se encaixa fica em "Outros"
 🏠 CASA - Aluguel, condomínio, água, luz, gás, internet, etc
@@ -51,6 +52,30 @@ streamlit run streamlit_app.py
 O app abrirá em `http://localhost:8501`
 
 Para rodar os testes: `pip install pytest` e depois `pytest`
+🏷️ Regras compartilhadas (o app lembra)
+Na aba "Classificar" você corrige a categoria de um fornecedor e o app passa a usar essa
+categoria em todos os lançamentos dele, nos próximos extratos também. Fornecedores com CNPJ
+no extrato podem ser consultados na Receita Federal (BrasilAPI, gratuita): o app sugere a
+categoria pelo CNAE principal e você confirma antes de aplicar.
+
+- **Empresas** (compra no cartão, boleto, débito ou CNPJ) vão para `regras/regras_fornecedores.csv`,
+  compartilhado por todos que usam o app.
+- **Pix para pessoas** ficam só nas suas regras pessoais (na sessão; dá para baixar e recarregar
+  o arquivo), para não expor nomes de ninguém.
+
+Para as regras compartilhadas serem gravadas de vez a partir do Streamlit Cloud:
+1. Crie um token em https://github.com/settings/personal-access-tokens/new
+   - Repository access: *Only select repositories* → este repositório
+   - Permissions → Repository permissions → **Contents: Read and write**
+2. No Streamlit Cloud: app → Settings → Secrets, acrescente:
+```
+GITHUB_TOKEN = "github_pat_..."
+GITHUB_REPO = "seu-usuario/sistema-financeiro-pj"
+GITHUB_BRANCH = "main"
+```
+Cada regra salva vira um commit no repositório: dá para ver quem mudou o quê e desfazer.
+Sem o token, as regras novas valem até o app reiniciar.
+
 🌐 Usando Online
 Acesse diretamente em:
 https://sistema-financeiro-pj-cfzvrv3ryghyyfppncz97u.streamlit.app/

@@ -8,16 +8,24 @@ import streamlit as st
 
 from financeiro import (
     CATEGORIA_APLICACAO,
+    aplicar_regras,
     carregar_arquivo,
+    categoria_do_cnae,
+    categorias_editaveis,
+    chave_fornecedor,
     consolidar,
     detectar_colunas,
+    eh_empresa,
+    extrair_cnpj,
     formatar_reais,
     montar_transacoes,
+    subcategorias_de,
     resumo_categorias,
     resumo_fornecedores,
     resumo_mensal,
     resumo_subcategorias,
 )
+from regras import RepositorioRegras, consultar_cnpj, juntar, nova_regra, regras_vazias
 
 # ============================================================================
 # CONFIGURAÇÃO DO APP
@@ -226,6 +234,55 @@ def tabela_em_reais(df, colunas_reais, colunas_pct=()):
 
 
 # ============================================================================
+# REGRAS LEMBRADAS
+# ============================================================================
+def ler_segredo(nome):
+    """Segredo do Streamlit; st.secrets falha quando não existe secrets.toml."""
+    try:
+        return st.secrets.get(nome)
+    except Exception:
+        return None
+
+
+repo_regras = RepositorioRegras(ler_segredo("GITHUB_TOKEN"), ler_segredo("GITHUB_REPO"),
+                                ler_segredo("GITHUB_BRANCH") or "main")
+st.session_state.setdefault("versao_regras", 0)
+st.session_state.setdefault("regras_pessoais", regras_vazias())
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def regras_compartilhadas(_versao):
+    """Lidas no máximo a cada minuto (para ver as regras salvas por outras pessoas)."""
+    return repo_regras.carregar()
+
+
+@st.cache_data(ttl=7 * 24 * 3600, show_spinner=False)
+def consultar_cnpj_cache(cnpj):
+    return consultar_cnpj(cnpj)
+
+
+def salvar_regras(novas_comp, novas_pess, descricao):
+    """Grava as regras novas; empresas no arquivo compartilhado, pessoas só na sessão."""
+    destino = None
+    if not novas_comp.empty:
+        atuais = repo_regras.carregar()  # sem cache: não apagar regra salva por outra pessoa
+        destino = repo_regras.salvar(juntar(atuais, novas_comp), f"Regras: {descricao}")
+    if not novas_pess.empty:
+        st.session_state["regras_pessoais"] = juntar(st.session_state["regras_pessoais"],
+                                                     novas_pess)
+    st.session_state["versao_regras"] += 1
+    regras_compartilhadas.clear()
+    partes = []
+    if not novas_comp.empty:
+        onde = "no GitHub (vale para todos)" if destino == "github" else \
+            "neste servidor (configure o GitHub para guardar de vez)"
+        partes.append(f"{len(novas_comp)} regra(s) de empresa salva(s) {onde}")
+    if not novas_pess.empty:
+        partes.append(f"{len(novas_pess)} regra(s) pessoal(is) guardada(s) nesta sessão")
+    st.session_state["aviso_regras"] = " · ".join(partes)
+
+
+# ============================================================================
 # SIDEBAR - UPLOAD
 # ============================================================================
 with st.sidebar:
@@ -329,6 +386,10 @@ for n, (cols, grupo) in enumerate(layouts.items()):
                             "Situação": f"⚠️ {e} (ajuste em ⚙️ Colunas)"})
 
 todos = consolidar(tabelas, nome_titular)
+# Regras lembradas (compartilhadas + pessoais) vencem as palavras-chave
+regras_comp = regras_compartilhadas(st.session_state["versao_regras"])
+regras_todas = juntar(regras_comp, st.session_state["regras_pessoais"])
+todos = aplicar_regras(todos, regras_todas)
 
 with st.expander(f"📂 Arquivos lidos ({len(arquivos)})",
                  expanded=any("Colunas" in x["Situação"] for x in leitura)):
@@ -363,7 +424,8 @@ entradas = df.loc[df["Tipo"] == "Entrada", "Valor"].sum()
 saidas = -df.loc[df["Tipo"] == "Saída", "Valor"].sum()
 aplicado = -internas.loc[internas["Categoria"] == CATEGORIA_APLICACAO, "Valor"].sum()
 
-tab1, tab2, tab3, tab4 = st.tabs(["📊 Resumo", "📅 Mês a Mês", "📋 Transações", "📥 Download"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Resumo", "📅 Mês a Mês", "📋 Transações",
+                                        "📥 Download", "🏷️ Classificar"])
 
 # ----------------------------------------------------------------------------
 with tab1:
@@ -464,3 +526,154 @@ with tab4:
         "📥 Download XLSX", xlsx.getvalue(), f"extrato_{hoje}.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
+# ----------------------------------------------------------------------------
+with tab5:
+    if st.session_state.get("aviso_regras"):
+        st.success(st.session_state.pop("aviso_regras"), icon="✅")
+
+    st.subheader("Corrigir categorias por fornecedor")
+    dica("Escolha a categoria e a subcategoria na tabela e clique em Salvar · "
+         "o app lembra nas próximas vezes, para todos os lançamentos desse fornecedor")
+    so_pendentes = st.toggle("Mostrar só OUTRO e TRANSFERÊNCIA", value=True)
+
+    saidas = todos[todos["Tipo"] == "Saída"].assign(
+        chave=lambda d: d["Fornecedor"].map(chave_fornecedor))
+    grupo = (saidas.groupby("chave")
+             .agg(Fornecedor=("Fornecedor", lambda v: max(v.unique(), key=len)),
+                  Categoria=("Categoria", lambda v: v.mode().iat[0]),
+                  Subcategoria=("Subcategoria", lambda v: v.mode().iat[0]),
+                  Total=("Valor", lambda v: -v.sum()),
+                  Transações=("Valor", "count"))
+             .sort_values("Total", ascending=False).reset_index())
+    if so_pendentes:
+        grupo = grupo[grupo["Categoria"].isin(["OUTRO", "TRANSFERÊNCIA"])].reset_index(drop=True)
+    SEM_SUB = "—"  # categoria sem subcategorias
+    grupo["Subcategoria"] = grupo["Subcategoria"].replace("", SEM_SUB).fillna(SEM_SUB)
+    grupo["Valor"] = grupo["Total"].map(formatar_reais)
+
+    todas_subs = [SEM_SUB] + sorted({x for c in categorias_editaveis()
+                                     for x in subcategorias_de(c) if x})
+    editado = st.data_editor(
+        grupo, hide_index=True, width="stretch", key=f"editor_regras_{so_pendentes}",
+        column_order=["Fornecedor", "Categoria", "Subcategoria", "Valor", "Transações"],
+        disabled=["chave", "Fornecedor", "Valor", "Transações"],
+        column_config={
+            "Categoria": st.column_config.SelectboxColumn(options=categorias_editaveis(),
+                                                          required=True),
+            "Subcategoria": st.column_config.SelectboxColumn(
+                options=todas_subs, help="Se não combinar com a categoria, vira \"Outros\""),
+            "Valor": st.column_config.TextColumn("Total"),
+        },
+    )
+    mudou = editado[(editado["Categoria"] != grupo["Categoria"])
+                    | (editado["Subcategoria"].fillna(SEM_SUB) != grupo["Subcategoria"])]
+    if st.button(f"💾 Salvar e lembrar ({len(mudou)})", type="primary", disabled=mudou.empty):
+        comp, pess = [], []
+        for _, r in mudou.iterrows():
+            validas = subcategorias_de(r["Categoria"])
+            sub = r["Subcategoria"] if r["Subcategoria"] in validas else validas[-1]
+            linhas = saidas[saidas["chave"] == r["chave"]]
+            cnpj = next((c for c in map(extrair_cnpj, linhas["Descrição"]) if c), "")
+            regra = nova_regra(r["chave"], r["Fornecedor"], r["Categoria"], sub, "usuario", cnpj)
+            (comp if eh_empresa(linhas["Descrição"], linhas["Conta"]) else pess).append(regra)
+        try:
+            salvar_regras(pd.concat(comp) if comp else regras_vazias(),
+                          pd.concat(pess) if pess else regras_vazias(),
+                          ", ".join(mudou["Fornecedor"].head(5)))
+            st.rerun()
+        except Exception as e:
+            st.error(f"Não foi possível salvar as regras: {e}")
+    st.caption("🔒 Empresas (cartão, boleto, débito ou CNPJ) vão para as regras compartilhadas. "
+               "Pix para pessoas fica só nas suas regras pessoais, para não expor nomes.")
+
+    # ---- Consulta de CNPJ
+    st.subheader("Consultar CNPJ na Receita")
+    conhecidas = set(regras_todas["chave"])
+    pend = saidas[saidas["Categoria"].isin(["OUTRO", "TRANSFERÊNCIA"])
+                  & ~saidas["chave"].isin(conhecidas)].copy()
+    pend["CNPJ"] = pend["Descrição"].map(extrair_cnpj)
+    pend = (pend.dropna(subset=["CNPJ"]).groupby(["chave", "CNPJ"])
+            .agg(Fornecedor=("Fornecedor", "first"), Total=("Valor", lambda v: -v.sum()))
+            .sort_values("Total", ascending=False).reset_index())
+    if pend.empty:
+        st.caption("Nenhum fornecedor pendente com CNPJ no extrato.")
+    else:
+        dica(f"{len(pend)} fornecedor(es) sem categoria têm CNPJ na descrição (Pix para empresas). "
+             "A consulta usa os dados públicos da Receita Federal (BrasilAPI, gratuita).")
+        if st.button(f"🔎 Consultar {len(pend)} CNPJ(s)"):
+            linhas = []
+            barra = st.progress(0.0, text="Consultando a Receita...")
+            for n, r in enumerate(pend.itertuples(), start=1):
+                info = consultar_cnpj_cache(r.CNPJ)
+                sugestao = categoria_do_cnae(info["cnae"]) if info else None
+                linhas.append({
+                    "Aplicar": sugestao is not None, "chave": r.chave, "Fornecedor": r.Fornecedor,
+                    "CNPJ": r.CNPJ, "Nome na Receita": info["nome"] if info else "(não encontrado)",
+                    "Atividade principal (CNAE)": f"{info['cnae']} · {info['atividade']}" if info else "",
+                    "Categoria": sugestao[0] if sugestao else "OUTRO",
+                    "Subcategoria": (sugestao[1] or SEM_SUB) if sugestao else SEM_SUB,
+                    "cnae": info["cnae"] if info else "", "Total": formatar_reais(r.Total),
+                })
+                barra.progress(n / len(pend), text=f"Consultando a Receita... {n}/{len(pend)}")
+            barra.empty()
+            st.session_state["sugestoes_cnpj"] = pd.DataFrame(linhas)
+
+        sug = st.session_state.get("sugestoes_cnpj")
+        if sug is not None and not sug.empty:
+            dica("Confira as sugestões; ajuste a categoria se precisar e desmarque o que não quiser")
+            sug_edit = st.data_editor(
+                sug, hide_index=True, width="stretch", key="editor_cnpj",
+                column_order=["Aplicar", "Fornecedor", "Nome na Receita",
+                              "Atividade principal (CNAE)", "Categoria", "Subcategoria", "Total"],
+                disabled=["Fornecedor", "Nome na Receita", "Atividade principal (CNAE)", "Total"],
+                column_config={
+                    "Categoria": st.column_config.SelectboxColumn(options=categorias_editaveis()),
+                    "Subcategoria": st.column_config.SelectboxColumn(options=todas_subs),
+                })
+            marcadas = sug_edit[sug_edit["Aplicar"]]
+            if st.button(f"✅ Aplicar {len(marcadas)} sugestão(ões)", disabled=marcadas.empty):
+                novas = []
+                for _, r in marcadas.iterrows():
+                    validas = subcategorias_de(r["Categoria"])
+                    sub = r["Subcategoria"] if r["Subcategoria"] in validas else validas[-1]
+                    nome = r["Nome na Receita"] if not r["Nome na Receita"].startswith("(") \
+                        else r["Fornecedor"]
+                    novas.append(nova_regra(r["chave"], nome, r["Categoria"], sub, "cnpj",
+                                            r["CNPJ"], r["cnae"]))
+                try:
+                    salvar_regras(pd.concat(novas), regras_vazias(),
+                                  "CNPJ " + ", ".join(marcadas["Fornecedor"].head(5)))
+                    st.session_state.pop("sugestoes_cnpj", None)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Não foi possível salvar as regras: {e}")
+
+    # ---- Regras salvas
+    pessoais = st.session_state["regras_pessoais"]
+    with st.expander(f"📚 Regras salvas ({len(regras_comp)} compartilhadas, "
+                     f"{len(pessoais)} pessoais)"):
+        if not repo_regras.no_github:
+            st.info("As regras compartilhadas estão sendo guardadas só neste servidor e se perdem "
+                    "quando o app reinicia. Para guardar de vez no GitHub, veja "
+                    "\"Regras compartilhadas\" no README.", icon="ℹ️")
+        colunas_ver = ["fornecedor", "categoria", "subcategoria", "origem", "cnpj",
+                       "atualizado_em"]
+        st.dataframe(regras_comp[colunas_ver], hide_index=True, width="stretch")
+        st.markdown("**Suas regras pessoais** (Pix para pessoas — ficam só com você)")
+        st.dataframe(pessoais[colunas_ver], hide_index=True, width="stretch")
+        c1, c2 = st.columns(2)
+        c1.download_button("📥 Baixar minhas regras pessoais",
+                           pessoais.to_csv(index=False).encode("utf-8-sig"),
+                           "minhas_regras.csv", "text/csv", disabled=pessoais.empty)
+        enviado = c2.file_uploader("Recarregar minhas regras pessoais", type=["csv"],
+                                   key="upload_regras")
+        if enviado is not None and st.session_state.get("regras_carregadas") != enviado.file_id:
+            try:
+                lidas = pd.read_csv(enviado, dtype=str).fillna("")
+                st.session_state["regras_pessoais"] = juntar(pessoais, lidas[pessoais.columns])
+                st.session_state["regras_carregadas"] = enviado.file_id
+                st.session_state["versao_regras"] += 1
+                st.rerun()
+            except Exception as e:
+                st.error(f"Arquivo de regras inválido: {e}")
