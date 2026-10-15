@@ -106,13 +106,32 @@ _PADRAO_APLICACAO = _padrao(PALAVRAS_APLICACAO)
 _PADRAO_FATURA = _padrao(PALAVRAS_FATURA)
 
 
+_DOC_PIX = re.compile(r"\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}|•••\.?\s*\d{3}\.\d{3}-••")
+
+
+def sem_dados_bancarios(descricao):
+    """Descrição sem o CPF/CNPJ e o banco de destino do Pix.
+
+    "Pix - REDE DE POSTOS - 34.615.965/0001-00 - PAGSEGURO INTERNET IP S.A. (0290)..."
+    -> "Pix - REDE DE POSTOS". Sem isso, "PAGSEGURO INTERNET" virava Casa/Internet e
+    "MERCADO PAGO" virava supermercado.
+    """
+    texto = str(descricao)
+    m = _DOC_PIX.search(texto)
+    if m:
+        texto = texto[:m.start()]
+    else:
+        texto = re.sub(r"\s-\s[^-]*Agência:.*$", "", texto)
+    return texto.strip(" -")
+
+
 def categorizar(descricao, valor=None):
     """Categoria de uma transação. Entradas (valor > 0) viram RECEITA.
 
     Aplicações/resgates e pagamento de fatura são identificados primeiro,
     nos dois sentidos, porque são movimentações internas.
     """
-    texto = normalizar(descricao).replace("mercado livre", "mercadolivre")
+    texto = normalizar(sem_dados_bancarios(descricao)).replace("mercado livre", "mercadolivre")
     if _PADRAO_APLICACAO.search(texto):
         return CATEGORIA_APLICACAO
     if _PADRAO_FATURA.search(texto):
@@ -389,7 +408,8 @@ def resumo_mensal(t):
 SUBCATEGORIAS = {
     "ALIMENTAÇÃO": {
         "Padaria": ["padaria", "panificadora", "pao", "bolo", "confeitaria", "doce*"],
-        "Hortifruti e açougue": ["sacolao", "hortifruti", "feira", "acougue", "carnes",
+        "Feira": ["feira", "feirante"],
+        "Hortifruti e açougue": ["sacolao", "hortifruti", "acougue", "carnes",
                                  "frios", "queijo", "peixaria"],
         "Supermercado": ["supermercado*", "mercado", "favorito", "nordestao", "carrefour",
                          "atacadao", "assai", "pao de acucar", "extra", "eloi chaves"],
@@ -467,7 +487,7 @@ def subcategorizar(categoria, descricao, fornecedor="", secao=""):
     regras = SUBCATEGORIAS.get(categoria)
     if not regras:
         return ""
-    texto = normalizar(f"{descricao} {fornecedor}")
+    texto = normalizar(f"{sem_dados_bancarios(descricao)} {fornecedor}")
     for sub, palavras in regras.items():
         if _PADROES_SUB[categoria][sub] is None:
             _PADROES_SUB[categoria][sub] = _padrao(palavras)
@@ -589,18 +609,23 @@ def aplicar_regras(t, regras):
     if regras is None or regras.empty or t.empty:
         return t
     t = t.copy()
+    if "FornecedorOriginal" not in t:
+        t["FornecedorOriginal"] = t["Fornecedor"]
     regras = regras.drop_duplicates("chave", keep="last")
     por_chave = {r.chave: r for r in regras.itertuples() if r.chave}
     chaves = sorted(por_chave, key=len, reverse=True)
     saidas = t["Tipo"] == "Saída"
     for i in t.index[saidas]:
-        k = chave_fornecedor(t.at[i, "Fornecedor"])
+        k = chave_fornecedor(t.at[i, "FornecedorOriginal"])
         regra = por_chave.get(k) or next(
             (por_chave[c] for c in chaves if len(c) >= 5 and (k.startswith(c) or c.startswith(k)
                                                               and len(k) >= 5)), None)
         if regra is None:
             continue
         t.at[i, "Categoria"] = regra.categoria
+        if isinstance(regra.fornecedor, str) and regra.fornecedor.strip():
+            # a regra também unifica o nome ("Lapv Consulting" e "Lapv Serv..." -> "Lapv")
+            t.at[i, "Fornecedor"] = regra.fornecedor.strip()
         sub = regra.subcategoria if isinstance(regra.subcategoria, str) else ""
         validas = subcategorias_de(regra.categoria)
         t.at[i, "Subcategoria"] = sub if sub in validas else validas[-1] if validas != [""] else ""
@@ -651,6 +676,7 @@ def extrair_fornecedor(descricao):
         if normalizar(parte).startswith(_PARTES_GENERICAS):
             continue
         nome = _limpar_nome(parte)
+        nome = _PREFIXO_INTERMEDIADOR.sub("", nome).strip()   # "MP*LOJA" -> "LOJA"
         if len(nome) >= 2:
             return _apresentar(nome)
     return _apresentar(_limpar_nome(partes[0]) if partes else "") or "Não identificado"
@@ -818,6 +844,134 @@ def ler_fatura_bb(texto, conta="BB Cartão"):
 
 
 # ============================================================================
+# OFX (qualquer banco) E EXTRATO NUBANK EM PDF
+# ============================================================================
+BANCOS_OFX = {"1": "BB", "260": "Nubank", "341": "Itaú", "237": "Bradesco", "104": "Caixa",
+              "33": "Santander", "77": "Inter", "336": "C6", "748": "Sicredi", "756": "Sicoob"}
+
+
+def _tag_ofx(bloco, tag):
+    """Valor de <TAG> no OFX (funciona no formato SGML, sem fechamento, e no XML)."""
+    m = re.search(rf"<{tag}>([^<\r\n]*)", bloco, re.IGNORECASE)
+    return m.group(1).strip() if m else ""
+
+
+def ler_ofx(conteudo):
+    """Lançamentos de um arquivo OFX (Money/Quicken), formato aceito pela maioria dos bancos."""
+    try:
+        texto = conteudo.decode("utf-8")
+    except UnicodeDecodeError:
+        texto = conteudo.decode("latin-1")
+    banco_id = (_tag_ofx(texto, "BANKID") or _tag_ofx(texto, "FID")).lstrip("0")
+    banco = BANCOS_OFX.get(banco_id) or _tag_ofx(texto, "ORG").title() or "OFX"
+    cartao = "<CCSTMTRS>" in texto.upper()
+    if banco == "BB":
+        conta = "BB Cartão" if cartao else "BB Conta"
+    else:
+        conta = f"{banco} Cartão" if cartao else banco
+
+    linhas = []
+    for bloco in re.findall(r"<STMTTRN>(.*?)(?=</STMTTRN>|<STMTTRN>|</BANKTRANLIST>)", texto,
+                            re.IGNORECASE | re.DOTALL):
+        data = _tag_ofx(bloco, "DTPOSTED")[:8]
+        valor = _tag_ofx(bloco, "TRNAMT").replace(",", ".")
+        descricao = _tag_ofx(bloco, "MEMO") or _tag_ofx(bloco, "NAME")
+        if len(data) == 8 and valor:
+            linhas.append({"Data": f"{data[:4]}-{data[4:6]}-{data[6:]}", "Descrição": descricao,
+                           "Valor": valor})
+    if not linhas:
+        raise ValueError("nenhum lançamento encontrado no OFX.")
+    bruto = pd.DataFrame(linhas)
+    t = montar_transacoes(bruto, {"data": "Data", "descricao": ["Descrição"], "valor": "Valor"},
+                          conta)
+    if cartao:  # no cartão, valor positivo no OFX é estorno, não receita
+        t.loc[t["Valor"] > 0, "Categoria"] = CATEGORIA_ESTORNO
+    return t
+
+
+_MESES_PDF = {"JAN": 1, "FEV": 2, "MAR": 3, "ABR": 4, "MAI": 5, "JUN": 6, "JUL": 7,
+              "AGO": 8, "SET": 9, "OUT": 10, "NOV": 11, "DEZ": 12}
+_DIA_NUBANK = re.compile(r"^(\d{2}) (JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ) (\d{4})"
+                         r"\s+(Total de (?:entradas|saídas).*)$")
+_GRUPO_NUBANK = re.compile(r"^Total de (entradas|saídas)\b")
+_VALOR_NUBANK = re.compile(r"^[\d.]+,\d{2}$")
+_VALOR_NO_FIM = re.compile(r"^(.*\S)\s+(?:- )?([\d.]+,\d{2})$")
+_INICIO_NUBANK = re.compile(r"^(Transfer|Pagamento|Pagto|Compra|Aplicação|Resgate|Valor Mensal|"
+                            r"Plano|Crédito|Débito|Estorno|Reembolso|Rendimento|Depósito|"
+                            r"Saque|Tarifa|IOF|Juros|Boleto|Pix)", re.IGNORECASE)
+# O PDF não tem o " - " depois do tipo de lançamento que o CSV tem; recoloca para a
+# descrição (e o fornecedor) ficarem iguais aos do CSV
+_TIPO_NUBANK = re.compile(r"^(Transferência (?:enviada|recebida) pelo Pix|Transferência Recebida|"
+                          r"Transferência enviada|Pagamento de boleto efetuado|"
+                          r"Compra no débito|Pagamento da fatura|Estorno|Reembolso)\s+(?!-)")
+
+
+def eh_extrato_nubank(texto):
+    return "Movimentações" in texto and "nubank.com.br" in texto and "Total de" in texto
+
+
+def ler_extrato_nubank_pdf(texto):
+    """Lançamentos do extrato da conta Nubank em PDF."""
+    linhas_pdf = texto.splitlines()
+    try:
+        inicio = next(i for i, l in enumerate(linhas_pdf) if l.strip() == "Movimentações") + 1
+    except StopIteration:
+        raise ValueError("extrato Nubank sem a seção Movimentações.")
+
+    lancamentos, buffer = [], []
+    data, sinal, pulando, apos_quebra = None, -1, False, False
+    for linha in linhas_pdf[inicio:]:
+        l = linha.strip()
+        if l.startswith("O saldo líquido corresponde"):
+            break  # fim das movimentações (avisos legais da última página)
+        # rodapé e cabeçalho de página: de "Tem alguma dúvida?" até "VALORES EM R$"
+        if l.startswith("Tem alguma dúvida"):
+            pulando = True
+        if pulando:
+            if "VALORES EM R$" in l:
+                pulando, apos_quebra = False, True
+            continue
+        if not l or re.fullmatch(r"\d+ de \d+", l) or l.startswith("Extrato gerado"):
+            continue
+        m = _DIA_NUBANK.match(l)
+        if m:
+            data = pd.Timestamp(int(m.group(3)), _MESES_PDF[m.group(2)], int(m.group(1)))
+            l = m.group(4)
+        g = _GRUPO_NUBANK.match(l)
+        if g:
+            sinal = 1 if g.group(1) == "entradas" else -1
+            buffer, apos_quebra = [], False
+            continue
+        # Descrição que continua depois da quebra de página (o valor já foi lido):
+        # não começa com um tipo de lançamento, então pertence ao lançamento anterior
+        if apos_quebra and not buffer and lancamentos and not _INICIO_NUBANK.match(l) \
+                and not _VALOR_NUBANK.match(l) and not _DIA_NUBANK.match(l) \
+                and not _GRUPO_NUBANK.match(l):
+            lancamentos[-1]["Descrição"] += " " + l
+            continue
+        apos_quebra = False
+        # O valor vem sozinho na linha ou no fim da última linha da descrição
+        if _VALOR_NUBANK.match(l):
+            valor = l
+        else:
+            fim = _VALOR_NO_FIM.match(l)
+            valor = fim.group(2) if fim else None
+            buffer.append(fim.group(1) if fim else l)
+        if valor and buffer and data is not None:
+            lancamentos.append({"Data": data.strftime("%Y-%m-%d"), "Descrição": " ".join(buffer),
+                                "Valor": sinal * converter_valor(valor)})
+            buffer = []
+
+    if not lancamentos:
+        raise ValueError("nenhum lançamento encontrado no extrato Nubank.")
+    for x in lancamentos:
+        x["Descrição"] = _TIPO_NUBANK.sub(r"\1 - ", re.sub(r"\s+", " ", x["Descrição"]).strip())
+    bruto = pd.DataFrame(lancamentos)
+    return montar_transacoes(bruto, {"data": "Data", "descricao": ["Descrição"],
+                                     "valor": "Valor"}, "Nubank")
+
+
+# ============================================================================
 # CARREGAMENTO DE VÁRIOS ARQUIVOS
 # ============================================================================
 def identificar_conta(nome, colunas=()):
@@ -841,14 +995,19 @@ def carregar_arquivo(nome, conteudo):
     {"tipo": "transacoes", "dados": DataFrame, "conta": str} para faturas em PDF.
     """
     ext = nome.lower().rsplit(".", 1)[-1]
-    if ext == "ofx":
-        raise ValueError("arquivo OFX ainda não é lido; envie o CSV do mesmo período.")
+    if ext == "ofx" or conteudo.lstrip()[:9] == b"OFXHEADER" or b"<OFX>" in conteudo[:2000]:
+        dados = ler_ofx(conteudo)
+        conta = dados["Conta"].iat[0] if not dados.empty else "OFX"
+        return {"tipo": "transacoes", "dados": dados, "conta": conta}
     if ext == "pdf" or conteudo[:4] == b"%PDF":
         texto = "\n".join(p.extract_text() or "" for p in PdfReader(io.BytesIO(conteudo)).pages)
         if eh_fatura_bb(texto):
             return {"tipo": "transacoes", "dados": ler_fatura_bb(texto), "conta": "BB Cartão"}
-        raise ValueError("PDF não reconhecido (só a fatura do cartão BB é lida em PDF); "
-                         "envie o extrato em CSV ou Excel.")
+        if eh_extrato_nubank(texto):
+            return {"tipo": "transacoes", "dados": ler_extrato_nubank_pdf(texto),
+                    "conta": "Nubank"}
+        raise ValueError("PDF não reconhecido (são lidos a fatura do cartão BB e o extrato da "
+                         "conta Nubank); envie o extrato em CSV, Excel ou OFX.")
     bruto = ler_extrato(nome, conteudo)
     return {"tipo": "tabela", "bruto": bruto, "conta": identificar_conta(nome, bruto.columns)}
 
@@ -903,8 +1062,12 @@ def consolidar(tabelas, nome_titular=""):
         x["_arquivo"] = n
     t = pd.concat(tabelas, ignore_index=True)
 
-    # Duplicatas: mantém, para cada lançamento, a maior quantidade vista num mesmo arquivo
-    chave = ["Conta", "Data", "Descrição", "Valor"]
+    # Duplicatas: o mesmo período enviado de novo, ou em outro formato (CSV, OFX e PDF
+    # do mesmo mês). Arquivos de uma mesma conta com datas em comum são o mesmo extrato,
+    # então a chave ignora a descrição (que muda de formato para formato). Mantém, para
+    # cada lançamento, a maior quantidade vista num mesmo arquivo, e a versão do
+    # primeiro arquivo (a tela manda CSV/Excel primeiro, que tem a melhor descrição).
+    chave = ["Conta", "Data", "Valor"]
     t["_ocorrencia"] = t.groupby(chave + ["_arquivo"]).cumcount()
     t = t.drop_duplicates(subset=chave + ["_ocorrencia"]).drop(columns=["_arquivo", "_ocorrencia"])
     t = t.reset_index(drop=True)
