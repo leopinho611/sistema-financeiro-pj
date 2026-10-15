@@ -497,3 +497,18 @@ def test_consultar_cnpj_formata_resposta(monkeypatch):
         raise OSError("sem rede")
     monkeypatch.setattr(regras.urllib.request, "urlopen", falha)
     assert regras.consultar_cnpj("12345678000190") is None
+
+
+def test_token_vencido_da_mensagem_clara(monkeypatch):
+    import urllib.error
+    import regras
+
+    def negado(req, timeout):
+        raise urllib.error.HTTPError(req.full_url, 401, "Bad credentials", {}, None)
+
+    monkeypatch.setattr(regras.urllib.request, "urlopen", negado)
+    repo = regras.RepositorioRegras("token-vencido", "dono/repo")
+    with pytest.raises(RuntimeError, match="token do GitHub venceu"):
+        repo.salvar(regras.regras_vazias(), "teste")
+    # leitura não quebra: cai para a cópia do repositório
+    assert list(repo.carregar().columns) == regras.COLUNAS_REGRAS

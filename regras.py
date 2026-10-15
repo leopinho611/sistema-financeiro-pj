@@ -103,13 +103,25 @@ class RepositorioRegras:
             try:
                 sha = self._requisicao("GET", f"{self._url()}?ref={self.branch}")["sha"]
             except urllib.error.HTTPError as e:
+                if e.code in (401, 403):
+                    raise RuntimeError(
+                        "o token do GitHub venceu ou não tem permissão. Gere um novo e atualize "
+                        "GITHUB_TOKEN em Settings → Secrets.") from e
                 if e.code != 404:
                     raise
             corpo = {"message": mensagem, "branch": self.branch,
                      "content": base64.b64encode(texto.encode("utf-8")).decode()}
             if sha:
                 corpo["sha"] = sha
-            self._requisicao("PUT", self._url(), corpo)
+            try:
+                self._requisicao("PUT", self._url(), corpo)
+            except urllib.error.HTTPError as e:
+                if e.code in (401, 403):
+                    raise RuntimeError(
+                        "o token do GitHub venceu ou não tem permissão de escrita. Gere um novo "
+                        "(Contents: Read and write) e atualize GITHUB_TOKEN em Settings → Secrets."
+                    ) from e
+                raise
             return "github"
         ARQUIVO_LOCAL.parent.mkdir(parents=True, exist_ok=True)
         ARQUIVO_LOCAL.write_text(texto, encoding="utf-8")
