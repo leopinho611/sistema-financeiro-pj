@@ -40,8 +40,9 @@ env/
 .DS_Store
 Thumbs.db
 
-# Data files
+# Data files (extratos nunca vão para o repositório)
 *.csv
+!regras/regras_fornecedores.csv
 *.xlsx
 extratos/
 dados/

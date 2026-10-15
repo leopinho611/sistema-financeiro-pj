@@ -24,14 +24,17 @@ CATEGORIAS = {
              "gas", "internet", "telefone", "celular", "claro", "vivo", "tim",
              "leroy merlin", "ferreira cost*", "tok stok", "casas bahia"],
     "TRANSPORTE": ["combustivel", "gasolina", "etanol", "posto*", "estacionamento",
-                   "uber*", "99 ride", "99app", "onibus", "pedagio", "ipva", "detran",
-                   "shell", "ipiranga", "youse", "seguro auto"],
+                   "uber*", "99 ride", "99app", "99 tecnologia", "onibus", "pedagio",
+                   "ipva", "detran",
+                   "shell", "ipiranga", "youse", "seguro auto", "sefaz",
+                   "multa transito", "multa de transito", "licenciamento"],
     "ALIMENTAÇÃO": ["restaurante", "lanchonete", "comida", "mercado", "supermercado",
                     "padaria", "panificadora", "pao", "delivery", "ifood", "rappi",
                     "acougue", "carnes", "frios", "hortifruti", "sacolao", "nordestao",
                     "carrefour", "atacadao", "assai", "favorito", "pizzaria", "bolo",
                     "camaroes", "queijo", "gelateria", "sorveteria", "crepe*", "cafe",
-                    "cafeteria", "burger*", "hamburgueria"],
+                    "cafeteria", "burger*", "hamburgueria", "food", "brasasfood",
+                    "eloi chaves", "hortifruti"],
     "SAÚDE": ["farmacia", "drogaria", "pague menos", "drogasil", "raia", "medico",
               "clinica", "dentista", "hospital", "laboratorio", "academia", "wellhub",
               "gympass", "unimed", "hapvida", "plano de saude", "barbearia", "estetica"],
@@ -47,11 +50,13 @@ CATEGORIAS = {
                  "amazon*", "mercadolivre", "mercado livre", "shopee", "shein",
                  "renner", "riachuelo", "baby"],
     "IMPOSTOS E TAXAS": ["irpf", "irpj", "icms", "pis", "cofins", "iss", "inss", "darf",
-                         "gps", "csll", "simples nacional", "gru", "sefaz", "pref mun",
+                         "gps", "csll", "simples nacional", "gru", "pref mun",
                          "prefeitura", "receita federal", "rfb", "iptu",
                          "conselho regional"],
     "TARIFAS BANCÁRIAS": ["tarifa", "iof", "juros", "anuidade", "cesta", "encargo",
                           "multa"],
+    "SERVIÇOS": ["consultoria", "consulting", "assessoria", "contabilidade",
+                 "serv empresariais", "servicos empresariais", "getninjas"],
     "TRANSFERÊNCIA": ["pix", "ted", "doc", "transferencia", "transf"],
 }
 CATEGORIA_ENTRADA = "RECEITA"
@@ -107,7 +112,7 @@ def categorizar(descricao, valor=None):
     Aplicações/resgates e pagamento de fatura são identificados primeiro,
     nos dois sentidos, porque são movimentações internas.
     """
-    texto = normalizar(descricao)
+    texto = normalizar(descricao).replace("mercado livre", "mercadolivre")
     if _PADRAO_APLICACAO.search(texto):
         return CATEGORIA_APLICACAO
     if _PADRAO_FATURA.search(texto):
@@ -376,6 +381,247 @@ def resumo_mensal(t):
 
 
 # ============================================================================
+# SUBCATEGORIAS
+# ============================================================================
+# Só as categorias listadas aqui têm subcategorias; nas demais o detalhe vai
+# direto para os fornecedores. O que não casar vira "Outros".
+# Mesmas regras de palavras de CATEGORIAS (palavra inteira; "*" = começo da palavra).
+SUBCATEGORIAS = {
+    "ALIMENTAÇÃO": {
+        "Padaria": ["padaria", "panificadora", "pao", "bolo", "confeitaria", "doce*"],
+        "Hortifruti e açougue": ["sacolao", "hortifruti", "feira", "acougue", "carnes",
+                                 "frios", "queijo", "peixaria"],
+        "Supermercado": ["supermercado*", "mercado", "favorito", "nordestao", "carrefour",
+                         "atacadao", "assai", "pao de acucar", "extra", "eloi chaves"],
+        "Restaurante": ["restaurante", "restau*", "lanchonete", "pizzaria", "burger*",
+                        "burguer*", "hamburgueria", "camaroes", "ifood", "rappi", "delivery",
+                        "gelateria", "sorveteria", "crepe*", "cafeteria", "churrascaria",
+                        "brasasfood", "food", "bar"],
+    },
+    "SAÚDE": {
+        "Drogaria": ["farmacia", "drogaria", "pague menos", "drogasil", "raia"],
+        "Plano de saúde": ["unimed", "hapvida", "plano de saude", "amil", "sulamerica",
+                           "bradesco saude"],
+        "Academia": ["academia", "wellhub", "gympass", "crossfit", "pilates"],
+        "Cuidados pessoais": ["barbearia", "salao", "cabeleireiro", "manicure", "estetica"],
+        "Clínicas, consultas e exames": ["clinica", "clinic*", "medico", "dentista",
+                                         "consultorio", "laboratorio", "hospital", "exame*",
+                                         "imagem", "diagnostic*", "radiolog*", "psicolog*",
+                                         "fisioterap*"],
+    },
+    "TRANSPORTE": {
+        "Posto de gasolina": ["posto*", "combustivel", "gasolina", "etanol", "shell",
+                              "ipiranga", "petrobras"],
+        "Seguro": ["seguro*", "youse"],
+        "Transporte por aplicativo": ["uber*", "99 ride", "99app", "99pop", "99 tecnologia",
+                                      "indriver"],
+        "Estacionamento": ["estacionamento*", "estapar", "zona azul"],
+        "IPVA e multas": ["ipva", "sefaz", "detran", "licenciamento", "multa"],
+    },
+    "CASA": {
+        "Água": ["agua", "caern"],
+        "Luz": ["luz", "energia", "cosern", "neoenergia"],
+        "Internet": ["internet", "fibra"],
+        "Gás": ["gas"],
+        "Condomínio": ["condominio"],
+        "Aluguel": ["aluguel"],
+        "Telefone e celular": ["claro", "vivo", "tim", "telefone", "celular", "oi movel"],
+        "Manutenções": ["leroy merlin", "ferreira cost*", "manutencao", "reforma",
+                        "material de construcao", "eletricista", "encanador"],
+    },
+    "SHOPPING": {
+        "Compras online": ["amazon*", "mercadolivre", "mercado livre", "shopee", "shein",
+                           "americanas", "magalu", "magazine"],
+        "Vestuário": ["riachuelo", "renner", "c&a", "cea", "zara", "roupa", "sapato",
+                      "vestuario", "hering"],
+        "Infantil": ["baby", "infantil", "kids", "bebe"],
+    },
+    "LAZER": {
+        "Viagens": ["gol linhas", "latam", "azul linhas", "zupper", "decolar", "hotel",
+                    "airbnb", "booking", "viagem"],
+        "Passeios e eventos": ["aquario", "cinema", "teatro", "show", "ingresso",
+                               "futebol", "clube", "parque"],
+    },
+    "IMPOSTOS E TAXAS": {
+        "Federais": ["darf", "gru", "receita federal", "rfb", "irpf", "irpj", "inss",
+                     "simples nacional", "gps", "csll", "cofins", "pis"],
+        "Estaduais": ["icms", "sefaz"],
+        "Municipais": ["pref mun", "prefeitura", "iptu", "iss", "pmsp"],
+        "Conselho profissional": ["conselho regional", "crc", "oab", "crea", "crm"],
+    },
+    "TARIFAS BANCÁRIAS": {
+        "Anuidade do cartão": ["anuidade"],
+        "Pacote de serviços": ["tarifa", "cesta", "pacote de servicos"],
+        "IOF e juros": ["iof", "juros", "encargo"],
+    },
+}
+SUBCATEGORIA_OUTROS = "Outros"
+# Seções da fatura do BB que já dizem a subcategoria
+SECOES_FATURA_SUB = {"supermercados": "Supermercado", "restaurantes": "Restaurante"}
+
+_PADROES_SUB = {cat: {sub: None for sub in subs} for cat, subs in SUBCATEGORIAS.items()}
+
+
+def subcategorizar(categoria, descricao, fornecedor="", secao=""):
+    """Subcategoria de uma saída, ou "" quando a categoria não tem subcategorias."""
+    regras = SUBCATEGORIAS.get(categoria)
+    if not regras:
+        return ""
+    texto = normalizar(f"{descricao} {fornecedor}")
+    for sub, palavras in regras.items():
+        if _PADROES_SUB[categoria][sub] is None:
+            _PADROES_SUB[categoria][sub] = _padrao(palavras)
+        if _PADROES_SUB[categoria][sub].search(texto):
+            return sub
+    # A seção da fatura do BB só decide quando nenhuma palavra-chave casou
+    if categoria == "ALIMENTAÇÃO" and secao in SECOES_FATURA_SUB:
+        return SECOES_FATURA_SUB[secao]
+    return SUBCATEGORIA_OUTROS
+
+
+# ============================================================================
+# CNPJ E CNAE
+# ============================================================================
+_PADRAO_CNPJ = re.compile(r"\b(\d{2})\.?(\d{3})\.?(\d{3})/?(\d{4})-?(\d{2})\b")
+
+# CNAE principal (Receita Federal) -> categoria e subcategoria. Casa pelo começo
+# do código: o mais específico vence ("4721102" antes de "4721").
+CNAE_CATEGORIAS = {
+    "1091": ("ALIMENTAÇÃO", "Padaria"),
+    "4721102": ("ALIMENTAÇÃO", "Padaria"),
+    "4721104": ("ALIMENTAÇÃO", "Padaria"),          # doces, balas e semelhantes
+    "4721103": ("ALIMENTAÇÃO", "Hortifruti e açougue"),  # laticínios e frios
+    "4722": ("ALIMENTAÇÃO", "Hortifruti e açougue"),
+    "4724": ("ALIMENTAÇÃO", "Hortifruti e açougue"),
+    "4711": ("ALIMENTAÇÃO", "Supermercado"),
+    "4712": ("ALIMENTAÇÃO", "Supermercado"),
+    "4723": ("ALIMENTAÇÃO", "Supermercado"),
+    "4729": ("ALIMENTAÇÃO", "Supermercado"),
+    "5611": ("ALIMENTAÇÃO", "Restaurante"),
+    "5612": ("ALIMENTAÇÃO", "Restaurante"),
+    "5620": ("ALIMENTAÇÃO", "Restaurante"),
+    "4771": ("SAÚDE", "Drogaria"),
+    "6550": ("SAÚDE", "Plano de saúde"),
+    "86": ("SAÚDE", "Clínicas, consultas e exames"),
+    "9313": ("SAÚDE", "Academia"),
+    "9602": ("SAÚDE", "Cuidados pessoais"),
+    "4731": ("TRANSPORTE", "Posto de gasolina"),
+    "5223": ("TRANSPORTE", "Estacionamento"),
+    "4923": ("TRANSPORTE", "Transporte por aplicativo"),
+    "35": ("CASA", "Luz"),
+    "36": ("CASA", "Água"),
+    "4784": ("CASA", "Gás"),
+    "61": ("CASA", "Telefone e celular"),
+    "6190": ("CASA", "Internet"),
+    "8112": ("CASA", "Condomínio"),
+    "6822": ("CASA", "Aluguel"),
+    "4741": ("CASA", "Manutenções"),
+    "4742": ("CASA", "Manutenções"),
+    "4743": ("CASA", "Manutenções"),
+    "4744": ("CASA", "Manutenções"),
+    "43": ("CASA", "Manutenções"),
+    "4781": ("SHOPPING", "Vestuário"),
+    "4782": ("SHOPPING", "Vestuário"),
+    "4713": ("SHOPPING", "Outros"),
+    "4759": ("SHOPPING", "Outros"),
+    "4763": ("SHOPPING", "Outros"),
+    "4789": ("SHOPPING", "Outros"),
+    "5510": ("LAZER", "Viagens"),
+    "5590": ("LAZER", "Viagens"),
+    "5111": ("LAZER", "Viagens"),
+    "7911": ("LAZER", "Viagens"),
+    "5914": ("LAZER", "Passeios e eventos"),
+    "90": ("LAZER", "Passeios e eventos"),
+    "91": ("LAZER", "Passeios e eventos"),
+    "9329": ("LAZER", "Passeios e eventos"),
+    "85": ("EDUCAÇÃO", ""),
+    "4761": ("EDUCAÇÃO", ""),
+    "6911": ("SERVIÇOS", ""),
+    "6920": ("SERVIÇOS", ""),
+    "70": ("SERVIÇOS", ""),
+    "74": ("SERVIÇOS", ""),
+    "82": ("SERVIÇOS", ""),
+}
+
+
+def extrair_cnpj(descricao):
+    """CNPJ (só números) citado na descrição, ou None. CPF mascarado não casa."""
+    m = _PADRAO_CNPJ.search(str(descricao))
+    return "".join(m.groups()) if m else None
+
+
+def categoria_do_cnae(cnae):
+    """(categoria, subcategoria) para um CNAE, ou None se não houver mapeamento."""
+    codigo = re.sub(r"\D", "", str(cnae or ""))
+    for tamanho in range(len(codigo), 1, -1):
+        if codigo[:tamanho] in CNAE_CATEGORIAS:
+            return CNAE_CATEGORIAS[codigo[:tamanho]]
+    return None
+
+
+# ============================================================================
+# REGRAS (o app lembra as correções por fornecedor)
+# ============================================================================
+COLUNAS_REGRAS = ["chave", "fornecedor", "categoria", "subcategoria", "origem", "cnpj",
+                  "cnae", "atualizado_em"]
+
+
+def chave_fornecedor(fornecedor):
+    return normalizar(fornecedor)
+
+
+def categorias_editaveis():
+    """Categorias que o usuário pode escolher para uma saída."""
+    return list(CATEGORIAS) + [CATEGORIA_PADRAO]
+
+
+def subcategorias_de(categoria):
+    subs = list(SUBCATEGORIAS.get(categoria, {}))
+    return subs + [SUBCATEGORIA_OUTROS] if subs else [""]
+
+
+def aplicar_regras(t, regras):
+    """Aplica as regras às saídas do fornecedor (a regra vence as palavras-chave).
+
+    Casa pelo nome do fornecedor sem acento/maiúsculas, também quando o nome no
+    extrato vem cortado ou mais longo ("lc comercio" pega "lc comercio natal").
+    """
+    if regras is None or regras.empty or t.empty:
+        return t
+    t = t.copy()
+    regras = regras.drop_duplicates("chave", keep="last")
+    por_chave = {r.chave: r for r in regras.itertuples() if r.chave}
+    chaves = sorted(por_chave, key=len, reverse=True)
+    saidas = t["Tipo"] == "Saída"
+    for i in t.index[saidas]:
+        k = chave_fornecedor(t.at[i, "Fornecedor"])
+        regra = por_chave.get(k) or next(
+            (por_chave[c] for c in chaves if len(c) >= 5 and (k.startswith(c) or c.startswith(k)
+                                                              and len(k) >= 5)), None)
+        if regra is None:
+            continue
+        t.at[i, "Categoria"] = regra.categoria
+        sub = regra.subcategoria if isinstance(regra.subcategoria, str) else ""
+        validas = subcategorias_de(regra.categoria)
+        t.at[i, "Subcategoria"] = sub if sub in validas else validas[-1] if validas != [""] else ""
+    return t
+
+
+def eh_empresa(descricoes, contas):
+    """O fornecedor é empresa? (compra no cartão, boleto/débito ou CNPJ na descrição).
+
+    Pix para pessoas não entra nas regras compartilhadas, para não expor nomes.
+    """
+    for d, c in zip(descricoes, contas):
+        n = normalizar(d)
+        if "Cartão" in str(c) or extrair_cnpj(d) or n.startswith(("pagamento de boleto", "pagto",
+                                                                   "pagamento de", "compra",
+                                                                   "debito")):
+            return True
+    return False
+
+
+# ============================================================================
 # FORNECEDORES
 # ============================================================================
 # Partes da descrição que dizem o tipo do lançamento, não quem recebeu
@@ -445,9 +691,27 @@ def _apresentar(nome):
     return " ".join(p if "/" in p else p.capitalize() for p in nome.split())
 
 
-def resumo_fornecedores(t, categoria, n=10):
-    """Os n fornecedores que mais receberam numa categoria; o resto em "Outros fornecedores"."""
-    saidas = t[(t["Tipo"] == "Saída") & (t["Categoria"] == categoria)].copy()
+def resumo_subcategorias(t, categoria):
+    """Total de saídas por subcategoria dentro de uma categoria ("Outros" por último)."""
+    saidas = t[(t["Tipo"] == "Saída") & (t["Categoria"] == categoria)]
+    if saidas.empty or "Subcategoria" not in saidas or saidas["Subcategoria"].eq("").all():
+        return pd.DataFrame(columns=["Subcategoria", "Total", "Transações", "% da categoria"])
+    tabela = (saidas.groupby("Subcategoria")["Valor"].agg(["sum", "count"])
+              .rename(columns={"sum": "Total", "count": "Transações"}))
+    tabela["Total"] = -tabela["Total"]
+    tabela["% da categoria"] = tabela["Total"] / tabela["Total"].sum() * 100
+    tabela["_outros"] = tabela.index == SUBCATEGORIA_OUTROS
+    tabela = tabela.sort_values(["_outros", "Total"], ascending=[True, False])
+    return tabela.drop(columns="_outros").reset_index()
+
+
+def resumo_fornecedores(t, categoria, n=10, subcategoria=None):
+    """Os n fornecedores que mais receberam numa categoria (ou subcategoria); o resto
+    em "Outros fornecedores". O % é sobre o total do grupo detalhado."""
+    filtro = (t["Tipo"] == "Saída") & (t["Categoria"] == categoria)
+    if subcategoria is not None:
+        filtro &= t["Subcategoria"] == subcategoria
+    saidas = t[filtro].copy()
     if saidas.empty:
         return pd.DataFrame(columns=["Fornecedor", "Total", "Transações", "% da categoria"])
     # Agrupa ignorando maiúsculas e acentos ("VIVIANE" = "Viviane")
@@ -536,13 +800,17 @@ def ler_fatura_bb(texto, conta="BB Cartão"):
         if valor > 0:
             categoria = CATEGORIA_ESTORNO
         else:
-            categoria = SECOES_FATURA_BB.get(secao) or categorizar(descricao, valor)
-            if categoria == "TRANSFERÊNCIA":
-                categoria = CATEGORIA_PADRAO
+            # Palavras-chave primeiro: a seção da fatura às vezes erra
+            # (sacolão em "Saúde"); ela só decide quando nada foi reconhecido
+            categoria = categorizar(descricao, valor)
+            if categoria in (CATEGORIA_PADRAO, "TRANSFERÊNCIA"):
+                categoria = SECOES_FATURA_BB.get(secao, CATEGORIA_PADRAO)
         linhas.append({"Data": data, "Descrição": descricao, "Valor": valor,
-                       "Categoria": categoria, "Fornecedor": fornecedor})
+                       "Categoria": categoria, "Fornecedor": fornecedor,
+                       "_secao": secao or ""})
 
-    t = pd.DataFrame(linhas, columns=["Data", "Descrição", "Valor", "Categoria", "Fornecedor"])
+    t = pd.DataFrame(linhas, columns=["Data", "Descrição", "Valor", "Categoria", "Fornecedor",
+                                      "_secao"])
     t["Tipo"] = ["Entrada" if v > 0 else "Saída" for v in t["Valor"]]
     t["Conta"] = conta
     t["Mês"] = t["Data"].dt.to_period("M").astype(str)
@@ -630,7 +898,7 @@ def consolidar(tabelas, nome_titular=""):
     tabelas = [x for x in tabelas if not x.empty]
     if not tabelas:
         return pd.DataFrame(columns=["Data", "Descrição", "Valor", "Tipo", "Categoria",
-                                     "Fornecedor", "Conta", "Mês"])
+                                     "Subcategoria", "Fornecedor", "Conta", "Mês"])
     for n, x in enumerate(tabelas):
         x["_arquivo"] = n
     t = pd.concat(tabelas, ignore_index=True)
@@ -649,6 +917,13 @@ def consolidar(tabelas, nome_titular=""):
     t = _marcar_transferencias_entre_contas(t)
     if nome_titular:
         t = _marcar_transferencias_para_si(t, nome_titular)
+    if "Fornecedor" not in t:
+        t["Fornecedor"] = t["Descrição"].map(extrair_fornecedor)
+    t["Fornecedor"] = t["Fornecedor"].fillna(t["Descrição"].map(extrair_fornecedor))
+    secoes = t["_secao"].fillna("") if "_secao" in t else pd.Series("", index=t.index)
+    t["Subcategoria"] = [subcategorizar(c, d, f, sec) for c, d, f, sec in
+                         zip(t["Categoria"], t["Descrição"], t["Fornecedor"], secoes)]
+    t = t.drop(columns=["_secao"], errors="ignore")
     return t.sort_values(["Data", "Conta"]).reset_index(drop=True)
 
 
