@@ -2,9 +2,19 @@ import io
 from datetime import datetime
 from html import escape
 
+import importlib
+import sys
+
 import altair as alt
 import pandas as pd
 import streamlit as st
+
+# Depois de uma atualização, o Streamlit Cloud recarrega este arquivo mas pode
+# manter na memória a versão antiga de financeiro.py e regras.py, e o app quebra
+# com ImportError até alguém reiniciar. Recarregá-los aqui evita isso.
+for _modulo in ("financeiro", "regras"):   # nessa ordem: regras importa financeiro
+    if _modulo in sys.modules:
+        importlib.reload(sys.modules[_modulo])
 
 from financeiro import (
     CATEGORIA_APLICACAO,
