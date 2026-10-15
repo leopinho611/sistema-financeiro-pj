@@ -3,6 +3,7 @@ Sistema de Controle Financeiro
 Um aplicativo web que automatiza a categorização de extratos bancários e gera análises visuais para profissionais autônomos e PJs.
 🚀 Funcionalidades
 ✅ Upload de Extratos - Vários arquivos de uma vez (meses e contas diferentes), CSV ou Excel de qualquer banco (detecta separador, acentuação, linhas de título e formato de valor brasileiro; aceita o ".excel" do BB)  
+✅ OFX de qualquer banco e extrato Nubank em PDF - O mesmo mês em mais de um formato (CSV, OFX, PDF) não duplica  
 ✅ Fatura do cartão BB em PDF - Lê as compras, parcelas e estornos  
 ✅ Movimentações internas - Aplicação/resgate automático (BB Rende Fácil, caixinhas Nubank), transferência entre suas contas e pagamento de fatura não contam como entrada nem saída  
 ✅ Identificação automática das colunas - Data, descrição, valor ou crédito/débito (ajustável na tela)  
@@ -60,8 +61,9 @@ categoria pelo CNAE principal e você confirma antes de aplicar.
 
 - **Empresas** (compra no cartão, boleto, débito ou CNPJ) vão para `regras/regras_fornecedores.csv`,
   compartilhado por todos que usam o app.
-- **Pix para pessoas** ficam só nas suas regras pessoais (na sessão; dá para baixar e recarregar
-  o arquivo), para não expor nomes de ninguém.
+- **Pix para pessoas** ficam só nas suas regras pessoais, para não expor nomes de ninguém
+  (o repositório é público). Para guardar de vez, cole-as no segredo `REGRAS_PESSOAIS` (a aba
+  Classificar gera o texto pronto); elas passam a valer sempre, mas não são exibidas no app.
 
 Para as regras compartilhadas serem gravadas de vez a partir do Streamlit Cloud:
 1. Crie um token em https://github.com/settings/personal-access-tokens/new

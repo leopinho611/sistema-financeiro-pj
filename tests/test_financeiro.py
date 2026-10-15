@@ -512,3 +512,122 @@ def test_token_vencido_da_mensagem_clara(monkeypatch):
         repo.salvar(regras.regras_vazias(), "teste")
     # leitura não quebra: cai para a cópia do repositório
     assert list(repo.carregar().columns) == regras.COLUNAS_REGRAS
+
+
+# ----------------------------------------------------------------------------
+# Nubank em OFX e PDF, duplicatas entre formatos, banco de destino do Pix
+# ----------------------------------------------------------------------------
+OFX_EXEMPLO = """OFXHEADER:100
+DATA:OFXSGML
+<OFX>
+<BANKMSGSRSV1><STMTTRNRS><STMTRS>
+<BANKACCTFROM>
+<BANKID>0260</BANKID>
+<ACCTID>123-4</ACCTID>
+</BANKACCTFROM>
+<BANKTRANLIST>
+<STMTTRN>
+<TRNTYPE>DEBIT</TRNTYPE>
+<DTPOSTED>20260102000000[-3:BRT]</DTPOSTED>
+<TRNAMT>-42.00</TRNAMT>
+<MEMO>Transferência enviada pelo Pix - PADARIA EXEMPLO - 12.345.678/0001-90 - BANCO X (0001) Agência: 1 Conta: 1-1</MEMO>
+</STMTTRN>
+<STMTTRN>
+<TRNTYPE>CREDIT</TRNTYPE>
+<DTPOSTED>20260105000000[-3:BRT]</DTPOSTED>
+<TRNAMT>1500.00</TRNAMT>
+<MEMO>Transferência recebida pelo Pix - CLIENTE X - 98.765.432/0001-10 - BANCO Y</MEMO>
+</STMTTRN>
+</BANKTRANLIST>
+</STMTRS></STMTTRNRS></BANKMSGSRSV1>
+</OFX>"""
+
+PDF_NUBANK_TEXTO = """Fulano de Tal
+ •••.111.222-••  0001 CPF Agência Conta
+ a 01 DE JANEIRO DE 2026 31 DE JANEIRO DE 2026 VALORES EM R$
+Movimentações
+02 JAN 2026 Total de saídas - 42,00
+Transferência enviada pelo Pix PADARIA EXEMPLO - 12.345.678/0001-90 - BANCO X 
+(0001) Agência: 1 Conta: 1-1
+42,00
+05 JAN 2026 Total de entradas + 1.500,00
+Transferência recebida pelo Pix CLIENTE X - 98.765.432/0001-10 - 
+Tem alguma dúvida? Mande uma mensagem para nosso time
+disponíveis em nubank.com.br/contatos#ouvidoria .
+Extrato gerado dia 06 de outubro de 2026 às 13:15 1 de 2
+Fulano de Tal
+ a 01 DE JANEIRO DE 2026 31 DE JANEIRO DE 2026 VALORES EM R$
+BANCO Y 1.500,00
+Total de saídas - 1.000,00
+Aplicação RDB 1.000,00
+O saldo líquido corresponde ao total de depósitos e rendimentos
+Tem alguma dúvida? Mande uma mensagem
+Extrato gerado dia 06 de outubro de 2026 às 13:15 2 de 2"""
+
+
+def test_ler_ofx_nubank():
+    from financeiro import carregar_arquivo
+    r = carregar_arquivo("extrato.ofx", OFX_EXEMPLO.encode("utf-8"))
+    t = r["dados"]
+    assert r["conta"] == "Nubank"
+    assert t["Valor"].tolist() == [-42.0, 1500.0]
+    assert t["Data"].dt.strftime("%d/%m/%Y").tolist() == ["02/01/2026", "05/01/2026"]
+    assert t["Fornecedor"].tolist() == ["Padaria Exemplo", "Cliente X"]
+
+
+def test_ler_extrato_nubank_pdf():
+    from financeiro import eh_extrato_nubank, ler_extrato_nubank_pdf
+    assert eh_extrato_nubank(PDF_NUBANK_TEXTO)
+    t = ler_extrato_nubank_pdf(PDF_NUBANK_TEXTO)
+    assert t["Valor"].tolist() == [-42.0, 1500.0, -1000.0]   # inclui o que vem no fim da linha
+    assert t["Fornecedor"].tolist()[:2] == ["Padaria Exemplo", "Cliente X"]
+    assert t["Descrição"].iat[1].endswith("BANCO Y")          # continuou na página seguinte
+    assert t["Categoria"].iat[2] == "APLICAÇÃO/RESGATE"
+
+
+def test_mesmo_mes_em_csv_ofx_e_pdf_nao_duplica():
+    from financeiro import (carregar_arquivo, consolidar, detectar_colunas, ler_extrato_nubank_pdf,
+                            montar_transacoes)
+    csv = ("Data,Valor,Identificador,Descrição\n"
+           "02/01/2026,-42.00,a,Transferência enviada pelo Pix - PADARIA EXEMPLO - "
+           "12.345.678/0001-90 - BANCO X\n"
+           "05/01/2026,1500.00,b,Transferência recebida pelo Pix - CLIENTE X\n").encode()
+    r = carregar_arquivo("NU_extrato.csv", csv)
+    t_csv = montar_transacoes(r["bruto"], detectar_colunas(r["bruto"]), r["conta"])
+    t_ofx = carregar_arquivo("extrato.ofx", OFX_EXEMPLO.encode())["dados"]
+    t_pdf = ler_extrato_nubank_pdf(PDF_NUBANK_TEXTO)
+    t = consolidar([t_csv, t_ofx, t_pdf])
+    assert sorted(t["Valor"].tolist()) == [-1000.0, -42.0, 1500.0]   # RDB só existe no PDF
+
+
+@pytest.mark.parametrize("descricao, esperado", [
+    ("Transferência enviada pelo Pix - REDE DE POSTOS - 34.615.965/0001-00 - "
+     "PAGSEGURO INTERNET IP S.A. (0290) Agência: 1", "TRANSPORTE"),
+    ("Transferência enviada pelo Pix - FULANA - •••.123.456-•• - MERCADO PAGO IP LTDA. (0323)",
+     "TRANSFERÊNCIA"),
+])
+def test_banco_de_destino_nao_define_categoria(descricao, esperado):
+    from financeiro import categorizar
+    assert categorizar(descricao, -10) == esperado
+
+
+def test_mp_asterisco_sai_do_fornecedor():
+    from financeiro import extrair_fornecedor
+    assert extrair_fornecedor("Compra com Cartão - 23/01 13:09 MP*LOJINHA") == "Lojinha"
+
+
+def test_regra_unifica_nome_do_fornecedor():
+    from financeiro import aplicar_regras
+    t = pd.DataFrame({"Fornecedor": ["Empresa X Consulting", "Empresa X Serv"],
+                      "Categoria": ["SERVIÇOS", "SERVIÇOS"], "Subcategoria": ["", ""],
+                      "Tipo": ["Saída", "Saída"], "Valor": [-10.0, -20.0]})
+    regras = _regras([("empresa x consulting", "Empresa X", "EDUCAÇÃO", "", "usuario"),
+                      ("empresa x serv", "Empresa X", "EDUCAÇÃO", "", "usuario")])
+    r = aplicar_regras(t, regras)
+    assert r["Fornecedor"].tolist() == ["Empresa X", "Empresa X"]
+    assert r["FornecedorOriginal"].tolist() == ["Empresa X Consulting", "Empresa X Serv"]
+
+
+def test_subcategoria_feira():
+    from financeiro import subcategorizar
+    assert subcategorizar("ALIMENTAÇÃO", "FEIRA DO BAIRRO") == "Feira"

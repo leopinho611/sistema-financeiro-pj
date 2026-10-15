@@ -257,6 +257,23 @@ def ler_segredo(nome):
 repo_regras = RepositorioRegras(ler_segredo("GITHUB_TOKEN"), ler_segredo("GITHUB_REPO"),
                                 ler_segredo("GITHUB_BRANCH") or "main")
 st.session_state.setdefault("versao_regras", 0)
+
+
+def _regras_dos_secrets():
+    """Regras pessoais guardadas no segredo REGRAS_PESSOAIS (CSV): Pix para pessoas que
+    não podem ir para o arquivo público. Valem sempre, mas não são exibidas."""
+    texto = ler_segredo("REGRAS_PESSOAIS")
+    if not texto:
+        return regras_vazias()
+    try:
+        return juntar(regras_vazias(), pd.read_csv(io.StringIO(texto.strip()), dtype=str)
+                      .fillna("").reindex(columns=regras_vazias().columns, fill_value=""))
+    except Exception:
+        st.warning("O segredo REGRAS_PESSOAIS não está num formato válido e foi ignorado.")
+        return regras_vazias()
+
+
+regras_privadas = _regras_dos_secrets()
 st.session_state.setdefault("regras_pessoais", regras_vazias())
 
 
@@ -301,8 +318,9 @@ with st.sidebar:
         "Escolha seus extratos",
         type=["csv", "xlsx", "xls", "excel", "pdf", "ofx"],
         accept_multiple_files=True,
-        help="Extratos em CSV ou Excel de qualquer banco, de vários meses e contas. "
-             "Faturas do cartão BB também em PDF."
+        help="Extratos em CSV, Excel ou OFX de qualquer banco, de vários meses e contas. "
+             "Em PDF: extrato da conta Nubank e fatura do cartão BB. Pode mandar o mesmo "
+             "mês em mais de um formato: as repetições são descartadas."
     )
     st.caption("🌓 Tema claro ou escuro: menu ⋮ no canto superior direito → Settings")
     nome_titular = st.text_input(
@@ -319,9 +337,10 @@ if not arquivos:
     st.info("👈 Clique em 'Importar Dados' no menu")
     st.markdown("""
     ## 🚀 Como Usar
-    1. Exporte seus extratos (CSV ou Excel) no app ou site do banco.
+    1. Exporte seus extratos (CSV, Excel ou OFX) no app ou site do banco.
        Pode enviar vários meses e várias contas de uma vez.
-    2. Fatura do cartão BB: pode enviar o PDF
+    2. Em PDF: extrato da conta Nubank e fatura do cartão BB. Se mandar o mesmo mês
+       em mais de um formato, as repetições são descartadas
     3. Confira se as colunas foram identificadas certo
     4. Veja o resumo, o mês a mês e as transações categorizadas
 
@@ -333,6 +352,10 @@ if not arquivos:
 tabelas = []
 leitura = []
 layouts = {}   # extratos com as mesmas colunas compartilham a identificação
+# CSV/Excel primeiro, depois OFX e PDF: quando o mesmo mês vem em mais de um formato,
+# fica a versão do primeiro (o CSV tem a descrição mais completa)
+ORDEM_FORMATO = {"csv": 0, "xlsx": 0, "xls": 0, "excel": 0, "ofx": 1, "pdf": 2}
+arquivos = sorted(arquivos, key=lambda a: ORDEM_FORMATO.get(a.name.lower().rsplit(".", 1)[-1], 3))
 for arquivo in arquivos:
     try:
         r = carregar_arquivo(arquivo.name, arquivo.getvalue())
@@ -398,7 +421,7 @@ for n, (cols, grupo) in enumerate(layouts.items()):
 todos = consolidar(tabelas, nome_titular)
 # Regras lembradas (compartilhadas + pessoais) vencem as palavras-chave
 regras_comp = regras_compartilhadas(st.session_state["versao_regras"])
-regras_todas = juntar(regras_comp, st.session_state["regras_pessoais"])
+regras_todas = juntar(juntar(regras_comp, regras_privadas), st.session_state["regras_pessoais"])
 todos = aplicar_regras(todos, regras_todas)
 
 with st.expander(f"📂 Arquivos lidos ({len(arquivos)})",
@@ -548,7 +571,7 @@ with tab5:
     so_pendentes = st.toggle("Mostrar só OUTRO e TRANSFERÊNCIA", value=True)
 
     saidas = todos[todos["Tipo"] == "Saída"].assign(
-        chave=lambda d: d["Fornecedor"].map(chave_fornecedor))
+        chave=lambda d: d["FornecedorOriginal"].map(chave_fornecedor))
     grupo = (saidas.groupby("chave")
              .agg(Fornecedor=("Fornecedor", lambda v: max(v.unique(), key=len)),
                   Categoria=("Categoria", lambda v: v.mode().iat[0]),
@@ -662,7 +685,7 @@ with tab5:
     # ---- Regras salvas
     pessoais = st.session_state["regras_pessoais"]
     with st.expander(f"📚 Regras salvas ({len(regras_comp)} compartilhadas, "
-                     f"{len(pessoais)} pessoais)"):
+                     f"{len(pessoais) + len(regras_privadas)} pessoais)"):
         if not repo_regras.no_github:
             st.info("As regras compartilhadas estão sendo guardadas só neste servidor e se perdem "
                     "quando o app reinicia. Para guardar de vez no GitHub, veja "
@@ -671,7 +694,19 @@ with tab5:
                        "atualizado_em"]
         st.dataframe(regras_comp[colunas_ver], hide_index=True, width="stretch")
         st.markdown("**Suas regras pessoais** (Pix para pessoas — ficam só com você)")
+        if not regras_privadas.empty:
+            st.caption(f"🔒 Mais {len(regras_privadas)} regra(s) pessoal(is) guardada(s) nos "
+                       "Secrets do app (não aparecem aqui para ninguém).")
         st.dataframe(pessoais[colunas_ver], hide_index=True, width="stretch")
+        if not pessoais.empty:
+            st.markdown("**Guardar de vez:** copie o texto abaixo e cole em Settings → Secrets "
+                        "do app no Streamlit Cloud" + (" (acrescente as linhas dentro do "
+                        "REGRAS_PESSOAIS que já existe)" if not regras_privadas.empty else ""))
+            linhas_csv = pessoais.to_csv(index=False).strip()
+            if regras_privadas.empty:
+                st.code(f'REGRAS_PESSOAIS = """\n{linhas_csv}\n"""', language="toml")
+            else:
+                st.code("\n".join(linhas_csv.splitlines()[1:]), language=None)
         c1, c2 = st.columns(2)
         c1.download_button("📥 Baixar minhas regras pessoais",
                            pessoais.to_csv(index=False).encode("utf-8-sig"),
