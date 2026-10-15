@@ -57,6 +57,10 @@ def test_converter_valor(entrada, esperado):
     ("PAO & CIA - LAGOA NOVA NATAL", "ALIMENTAÇÃO"),
     ("ANTHROPIC* CLAUDE SUB", "ASSINATURAS"),
     ("PostoMacaco PARNAMIRIM", "TRANSPORTE"),
+    ("PMSP MULTA TRANSITO", "TRANSPORTE"),          # multa de trânsito não é tarifa
+    ("Pagamento de boleto efetuado - SEFAZ DISTRITO FEDERAL", "TRANSPORTE"),  # IPVA
+    ("LAPV SERV EMPRESARIAIS FLORIANOPOLIS", "SERVIÇOS"),
+    ("Brasas Food - Loja", "ALIMENTAÇÃO"),
     ("GASTOS DIVERSOS", "OUTRO"),        # "gas" não pode casar dentro de "gastos"
     ("APLICACAO CDB", "APLICAÇÃO/RESGATE"),
     ("BB Rende Fácil - Rende Facil", "APLICAÇÃO/RESGATE"),
@@ -311,7 +315,19 @@ def test_resumo_fornecedores_top_10_e_outros():
     ("ALIMENTAÇÃO", "SUPERMERCADO EXEMPLO NATAL", "Supermercado"),
     ("ALIMENTAÇÃO", "Pix - RESTAURANTE DO ZE", "Restaurante"),
     ("ALIMENTAÇÃO", "IFOOD *PEDIDO", "Restaurante"),
-    ("ALIMENTAÇÃO", "PADARIA DO BAIRRO", "Outros"),
+    ("ALIMENTAÇÃO", "PADARIA DO BAIRRO", "Padaria"),
+    ("ALIMENTAÇÃO", "SACOLAO DO CENTRO", "Hortifruti e açougue"),
+    ("ALIMENTAÇÃO", "LANCHONETE QUALQUER COISA", "Restaurante"),
+    ("ALIMENTAÇÃO", "ITEM SEM PALAVRA-CHAVE", "Outros"),
+    ("SAÚDE", "BARBEARIA DO CENTRO", "Cuidados pessoais"),
+    ("SAÚDE", "WELLHUB", "Academia"),
+    ("TRANSPORTE", "Pagamento de boleto efetuado - SEFAZ DISTRITO FEDERAL", "IPVA e multas"),
+    ("TRANSPORTE", "ESTACIONAMENTO SHOPPING", "Estacionamento"),
+    ("CASA", "CLARO S/A - MÓVEL", "Telefone e celular"),
+    ("SHOPPING", "RIACHUELO NATAL", "Vestuário"),
+    ("LAZER", "GOL LINHAS A* PARC 01/04", "Viagens"),
+    ("IMPOSTOS E TAXAS", "RFB-DARF CODIGO DE BARRAS", "Federais"),
+    ("TARIFAS BANCÁRIAS", "ANUIDADE DIFERENCIADA", "Anuidade do cartão"),
     ("SAÚDE", "DROGARIA EXEMPLO", "Drogaria"),
     ("SAÚDE", "Pagamento de boleto efetuado - UNIMED NATAL", "Plano de saúde"),
     ("TRANSPORTE", "PostoMacaco PARNAMIRIM", "Posto de gasolina"),
@@ -321,7 +337,8 @@ def test_resumo_fornecedores_top_10_e_outros():
     ("CASA", "Pagamento de boleto efetuado - CAERN", "Água"),
     ("CASA", "LEROY MERLIN PARNAMIRIM", "Manutenções"),
     ("CASA", "Pix - CONDOMINIO RESIDENCIAL", "Condomínio"),
-    ("SHOPPING", "LOJA X", ""),          # categoria sem subcategorias
+    ("SHOPPING", "LOJA X", "Outros"),
+    ("SERVIÇOS", "CONSULTORIA X", ""),   # categoria sem subcategorias
 ])
 def test_subcategorizar(categoria, descricao, sub):
     from financeiro import subcategorizar
@@ -331,6 +348,8 @@ def test_subcategorizar(categoria, descricao, sub):
 def test_secao_restaurantes_da_fatura_vira_subcategoria():
     from financeiro import subcategorizar
     assert subcategorizar("ALIMENTAÇÃO", "CASA DA VOVO NATAL", secao="restaurantes") == "Restaurante"
+    # palavra-chave vence a seção da fatura
+    assert subcategorizar("ALIMENTAÇÃO", "HORA DO PAO", secao="restaurantes") == "Padaria"
 
 
 def test_resumo_subcategorias_outros_por_ultimo():

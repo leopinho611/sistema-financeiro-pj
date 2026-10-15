@@ -25,13 +25,15 @@ CATEGORIAS = {
              "leroy merlin", "ferreira cost*", "tok stok", "casas bahia"],
     "TRANSPORTE": ["combustivel", "gasolina", "etanol", "posto*", "estacionamento",
                    "uber*", "99 ride", "99app", "onibus", "pedagio", "ipva", "detran",
-                   "shell", "ipiranga", "youse", "seguro auto"],
+                   "shell", "ipiranga", "youse", "seguro auto", "sefaz",
+                   "multa transito", "multa de transito", "licenciamento"],
     "ALIMENTAÇÃO": ["restaurante", "lanchonete", "comida", "mercado", "supermercado",
                     "padaria", "panificadora", "pao", "delivery", "ifood", "rappi",
                     "acougue", "carnes", "frios", "hortifruti", "sacolao", "nordestao",
                     "carrefour", "atacadao", "assai", "favorito", "pizzaria", "bolo",
                     "camaroes", "queijo", "gelateria", "sorveteria", "crepe*", "cafe",
-                    "cafeteria", "burger*", "hamburgueria"],
+                    "cafeteria", "burger*", "hamburgueria", "food", "brasasfood",
+                    "eloi chaves", "hortifruti"],
     "SAÚDE": ["farmacia", "drogaria", "pague menos", "drogasil", "raia", "medico",
               "clinica", "dentista", "hospital", "laboratorio", "academia", "wellhub",
               "gympass", "unimed", "hapvida", "plano de saude", "barbearia", "estetica"],
@@ -47,11 +49,13 @@ CATEGORIAS = {
                  "amazon*", "mercadolivre", "mercado livre", "shopee", "shein",
                  "renner", "riachuelo", "baby"],
     "IMPOSTOS E TAXAS": ["irpf", "irpj", "icms", "pis", "cofins", "iss", "inss", "darf",
-                         "gps", "csll", "simples nacional", "gru", "sefaz", "pref mun",
+                         "gps", "csll", "simples nacional", "gru", "pref mun",
                          "prefeitura", "receita federal", "rfb", "iptu",
                          "conselho regional"],
     "TARIFAS BANCÁRIAS": ["tarifa", "iof", "juros", "anuidade", "cesta", "encargo",
                           "multa"],
+    "SERVIÇOS": ["consultoria", "consulting", "assessoria", "contabilidade",
+                 "serv empresariais", "servicos empresariais", "getninjas"],
     "TRANSFERÊNCIA": ["pix", "ted", "doc", "transferencia", "transf"],
 }
 CATEGORIA_ENTRADA = "RECEITA"
@@ -383,23 +387,32 @@ def resumo_mensal(t):
 # Mesmas regras de palavras de CATEGORIAS (palavra inteira; "*" = começo da palavra).
 SUBCATEGORIAS = {
     "ALIMENTAÇÃO": {
+        "Padaria": ["padaria", "panificadora", "pao", "bolo", "confeitaria"],
+        "Hortifruti e açougue": ["sacolao", "hortifruti", "feira", "acougue", "carnes",
+                                 "frios", "queijo", "peixaria"],
         "Supermercado": ["supermercado*", "mercado", "favorito", "nordestao", "carrefour",
-                         "atacadao", "assai", "pao de acucar", "extra"],
+                         "atacadao", "assai", "pao de acucar", "extra", "eloi chaves"],
         "Restaurante": ["restaurante", "restau*", "lanchonete", "pizzaria", "burger*",
                         "burguer*", "hamburgueria", "camaroes", "ifood", "rappi", "delivery",
                         "gelateria", "sorveteria", "crepe*", "cafeteria", "churrascaria",
-                        "brasasfood", "bar"],
+                        "brasasfood", "food", "bar"],
     },
     "SAÚDE": {
         "Drogaria": ["farmacia", "drogaria", "pague menos", "drogasil", "raia"],
         "Plano de saúde": ["unimed", "hapvida", "plano de saude", "amil", "sulamerica",
                            "bradesco saude"],
+        "Academia": ["academia", "wellhub", "gympass", "crossfit", "pilates"],
+        "Cuidados pessoais": ["barbearia", "salao", "cabeleireiro", "manicure", "estetica"],
+        "Clínicas e consultas": ["clinica", "clinic*", "medico", "dentista", "consultorio",
+                                 "laboratorio", "hospital", "psicolog*", "fisioterap*"],
     },
     "TRANSPORTE": {
         "Posto de gasolina": ["posto*", "combustivel", "gasolina", "etanol", "shell",
                               "ipiranga", "petrobras"],
         "Seguro": ["seguro*", "youse"],
         "Transporte por aplicativo": ["uber*", "99 ride", "99app", "99pop", "indriver"],
+        "Estacionamento": ["estacionamento*", "estapar", "zona azul"],
+        "IPVA e multas": ["ipva", "sefaz", "detran", "licenciamento", "multa"],
     },
     "CASA": {
         "Água": ["agua", "caern"],
@@ -408,8 +421,34 @@ SUBCATEGORIAS = {
         "Gás": ["gas"],
         "Condomínio": ["condominio"],
         "Aluguel": ["aluguel"],
+        "Telefone e celular": ["claro", "vivo", "tim", "telefone", "celular", "oi movel"],
         "Manutenções": ["leroy merlin", "ferreira cost*", "manutencao", "reforma",
                         "material de construcao", "eletricista", "encanador"],
+    },
+    "SHOPPING": {
+        "Compras online": ["amazon*", "mercadolivre", "mercado livre", "shopee", "shein",
+                           "americanas", "magalu", "magazine"],
+        "Vestuário": ["riachuelo", "renner", "c&a", "cea", "zara", "roupa", "sapato",
+                      "vestuario", "hering"],
+        "Infantil": ["baby", "infantil", "kids", "bebe"],
+    },
+    "LAZER": {
+        "Viagens": ["gol linhas", "latam", "azul linhas", "zupper", "decolar", "hotel",
+                    "airbnb", "booking", "viagem"],
+        "Passeios e eventos": ["aquario", "cinema", "teatro", "show", "ingresso",
+                               "futebol", "clube", "parque"],
+    },
+    "IMPOSTOS E TAXAS": {
+        "Federais": ["darf", "gru", "receita federal", "rfb", "irpf", "irpj", "inss",
+                     "simples nacional", "gps", "csll", "cofins", "pis"],
+        "Estaduais": ["icms", "sefaz"],
+        "Municipais": ["pref mun", "prefeitura", "iptu", "iss", "pmsp"],
+        "Conselho profissional": ["conselho regional", "crc", "oab", "crea", "crm"],
+    },
+    "TARIFAS BANCÁRIAS": {
+        "Anuidade do cartão": ["anuidade"],
+        "Pacote de serviços": ["tarifa", "cesta", "pacote de servicos"],
+        "IOF e juros": ["iof", "juros", "encargo"],
     },
 }
 SUBCATEGORIA_OUTROS = "Outros"
@@ -424,14 +463,15 @@ def subcategorizar(categoria, descricao, fornecedor="", secao=""):
     regras = SUBCATEGORIAS.get(categoria)
     if not regras:
         return ""
-    if categoria == "ALIMENTAÇÃO" and secao in SECOES_FATURA_SUB:
-        return SECOES_FATURA_SUB[secao]
     texto = normalizar(f"{descricao} {fornecedor}")
     for sub, palavras in regras.items():
         if _PADROES_SUB[categoria][sub] is None:
             _PADROES_SUB[categoria][sub] = _padrao(palavras)
         if _PADROES_SUB[categoria][sub].search(texto):
             return sub
+    # A seção da fatura do BB só decide quando nenhuma palavra-chave casou
+    if categoria == "ALIMENTAÇÃO" and secao in SECOES_FATURA_SUB:
+        return SECOES_FATURA_SUB[secao]
     return SUBCATEGORIA_OUTROS
 
 

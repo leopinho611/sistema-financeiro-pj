@@ -14,7 +14,7 @@ Um aplicativo web que automatiza a categorização de extratos bancários e gera
 ✅ Exportação - CSV (padrão Excel brasileiro) ou XLSX com abas de resumo  
 ✅ Filtros - Por conta, período, categoria e busca na descrição
 📋 Categorias Suportadas
-Subcategorias: ALIMENTAÇÃO (Supermercado, Restaurante), SAÚDE (Drogaria, Plano de saúde), TRANSPORTE (Posto de gasolina, Seguro, Transporte por aplicativo), CASA (Água, Luz, Internet, Gás, Condomínio, Aluguel, Manutenções); o que não se encaixa fica em "Outros"
+Subcategorias: ALIMENTAÇÃO (Supermercado, Restaurante, Padaria, Hortifruti e açougue), SAÚDE (Drogaria, Plano de saúde, Academia, Cuidados pessoais, Clínicas e consultas), TRANSPORTE (Posto de gasolina, Seguro, Transporte por aplicativo, Estacionamento, IPVA e multas), CASA (Água, Luz, Internet, Gás, Condomínio, Aluguel, Telefone e celular, Manutenções), SHOPPING (Compras online, Vestuário, Infantil), LAZER (Viagens, Passeios e eventos), IMPOSTOS E TAXAS (Federais, Estaduais, Municipais, Conselho profissional), TARIFAS BANCÁRIAS (Anuidade do cartão, Pacote de serviços, IOF e juros); o que não se encaixa fica em "Outros"
 🏠 CASA - Aluguel, condomínio, água, luz, gás, internet, etc
 🚗 TRANSPORTE - Combustível, Uber, ônibus, estacionamento, etc
 🍽️ ALIMENTAÇÃO - Restaurante, mercado, padaria, delivery, etc
@@ -24,6 +24,7 @@ Subcategorias: ALIMENTAÇÃO (Supermercado, Restaurante), SAÚDE (Drogaria, Plan
 👕 SHOPPING - Roupas, sapatos, loja, etc
 💳 IMPOSTOS E TAXAS - IRPF, DARF, Simples Nacional, SEFAZ, Prefeitura, GRU, etc
 📺 ASSINATURAS - Netflix, Spotify, Claude, etc
+🧾 SERVIÇOS - Consultoria, assessoria, contabilidade, etc
 🏦 TARIFAS BANCÁRIAS - Tarifas, IOF, juros, anuidade, etc
 🔁 TRANSFERÊNCIA - PIX, TED, DOC sem outra categoria identificada
 💵 RECEITA - Todas as entradas
