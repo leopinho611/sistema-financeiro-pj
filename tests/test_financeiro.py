@@ -671,3 +671,38 @@ def test_mei_nao_vai_para_regras_compartilhadas():
     assert eh_mei(pix_mei)
     assert not eh_empresa([pix_mei], ["Nubank"])
     assert not eh_mei("Transferência enviada pelo Pix - PADARIA X - 12.345.678/0001-90")
+
+
+# ----------------------------------------------------------------------------
+# Entradas
+# ----------------------------------------------------------------------------
+@pytest.mark.parametrize("descricao, tipo", [
+    ("Transferência recebida pelo Pix - CLIENTE LTDA - 12.345.678/0001-90 - BANCO X", "Recebido de empresas"),
+    ("Transferência Recebida - Fulano de Tal - •••.123.456-•• - NU PAGAMENTOS", "Recebido de pessoas"),
+    ("Pix - Recebido - 09/09 08:05 12345678901 Fulano de Tal", "Recebido de pessoas"),
+    ("Pix recebido - 12.345.678 MARIA DA SILVA - 12.345.678/0001-90", "Recebido de pessoas"),   # MEI
+    ("CRÉDITO DE SALÁRIO EMPRESA X", "Salário"),
+    ("Rendimento líquido", "Rendimentos"),
+    ("Estorno de compra", "Estornos e reembolsos"),
+    ("Transferência Periódica - 20/01 FULANO", "Outras entradas"),
+])
+def test_tipo_de_entrada(descricao, tipo):
+    from financeiro import tipo_de_entrada
+    assert tipo_de_entrada(descricao) == tipo
+
+
+def test_resumos_de_entradas():
+    from financeiro import resumo_categorias, resumo_fornecedores
+    t = pd.DataFrame({
+        "Categoria": ["Recebido de empresas"] * 3 + ["Recebido de pessoas"],
+        "Subcategoria": "", "Tipo": "Entrada",
+        "Fornecedor": ["Cliente A", "Cliente A", "Cliente B", "Fulano"],
+        "Valor": [1000.0, 500.0, 500.0, 200.0],
+    })
+    cats = resumo_categorias(t, tipo="Entrada")
+    assert cats["Categoria"].tolist() == ["Recebido de empresas", "Recebido de pessoas"]
+    assert cats["Total"].tolist() == [2000.0, 200.0]           # entradas ficam positivas
+    assert "% das entradas" in cats
+    fontes = resumo_fornecedores(t, "Recebido de empresas", tipo="Entrada", n=1)
+    assert fontes["Fornecedor"].tolist() == ["Cliente A", "Outras fontes (1)"]
+    assert fontes["% da categoria"].tolist() == [75.0, 25.0]
