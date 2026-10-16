@@ -16,7 +16,13 @@ Um aplicativo web que automatiza a categorização de extratos bancários e gera
 ✅ Tema claro ou escuro - Azul-marinho, dourado e branco-osso; troque em ⋮ → Settings (por padrão segue o aparelho)  
 ✅ Exportação - CSV (padrão Excel brasileiro) ou XLSX com abas de resumo  
 ✅ Filtros - Por conta, período, categoria e busca na descrição  
-✅ Classificar - Corrija a categoria por fornecedor e o app lembra; consulta de CNPJ na Receita com sugestão pelo CNAE
+✅ Consultar CNPJ - Pix para empresas: consulta a atividade na Receita (dados públicos) e sugere a categoria pelo CNAE; vale até fechar o app
+
+⭐ Área Plus (com código de acesso)
+⭐ Imposto de Renda - Possíveis deduções (saúde, educação, PGBL, pensão) com o CNPJ de quem recebeu, rendimentos de empresas e de pessoas; planilha para o contador  
+⭐ Fixos e parcelas - Gastos que se repetem (valor fixo, conta mensal, frequente) com a data prevista do próximo; parcelas do cartão que ainda faltam, quanto e até quando  
+⭐ Saúde financeira - Indicadores com semáforo: quanto sobra, meses no vermelho, dependência da maior fonte, compromissos, parcelas e reserva de emergência  
+⭐ Classificar - Corrija a categoria por fornecedor e o app lembra nas próximas vezes
 📋 Categorias Suportadas
 Subcategorias: ALIMENTAÇÃO (Supermercado, Restaurante, Padaria, Hortifruti e açougue), SAÚDE (Drogaria, Plano de saúde, Academia, Cuidados pessoais, Clínicas e consultas), TRANSPORTE (Posto de gasolina, Seguro, Transporte por aplicativo, Estacionamento, IPVA e multas), CASA (Água, Luz, Internet, Gás, Condomínio, Aluguel, Telefone e celular, Manutenções), SHOPPING (Compras online, Vestuário, Infantil), LAZER (Viagens, Passeios e eventos), IMPOSTOS E TAXAS (Federais, Estaduais, Municipais, Conselho profissional), TARIFAS BANCÁRIAS (Anuidade do cartão, Pacote de serviços, IOF e juros); o que não se encaixa fica em "Outros"
 🏠 CASA - Aluguel, condomínio, água, luz, gás, internet, etc
@@ -55,8 +61,18 @@ streamlit run streamlit_app.py
 O app abrirá em `http://localhost:8501`
 
 Para rodar os testes: `pip install pytest` e depois `pytest`
+⭐ Área Plus
+A área Plus abre com um código de acesso. No Streamlit Cloud: app → Settings → Secrets:
+```
+PLUS_CODIGOS = ["codigo-1", "codigo-2"]    # ou "codigo-1, codigo-2"
+PLUS_LINK = "https://..."                 # opcional: link de pagamento ("Quero o Plus")
+CONTATO_CONSULTORIA = "https://wa.me/..." # opcional: botão "Falar com um consultor"
+```
+Para tirar o acesso de alguém, apague o código dele da lista. Sem `PLUS_CODIGOS`, a área
+fica fechada para todos e só a vitrine aparece.
+
 🏷️ Regras compartilhadas (o app lembra)
-Na aba "Classificar" você corrige a categoria de um fornecedor e o app passa a usar essa
+Na aba "⭐ Classificar" você corrige a categoria de um fornecedor e o app passa a usar essa
 categoria em todos os lançamentos dele, nos próximos extratos também. Fornecedores com CNPJ
 no extrato podem ser consultados na Receita Federal (BrasilAPI, gratuita): o app sugere a
 categoria pelo CNAE principal e você confirma antes de aplicar.
@@ -101,7 +117,10 @@ Exportar dados categorizados
   sem valores nem datas:
   - empresas: em `regras/regras_fornecedores.csv`, neste repositório (público);
   - pessoas (Pix, MEI): só no segredo `REGRAS_PESSOAIS`, que apenas o dono do app vê.
-- **Consulta de CNPJ:** quando você clica no botão, só o CNPJ é enviado à BrasilAPI.
+- **Consulta de CNPJ:** quando você clica no botão, só o CNPJ é enviado à BrasilAPI. Na
+  área aberta, o resultado vale só até fechar o app; só a classificação do Plus grava regras.
+- **Área Plus:** os relatórios são calculados na hora, a partir dos extratos abertos. O valor
+  "quanto você tem guardado" não é salvo.
 - O app não usa inteligência artificial nem envia extratos a terceiros.
 🎯 Roadmap (Próximas Semanas)
 [ ] Integração com Google Drive API (importar extratos automaticamente)
