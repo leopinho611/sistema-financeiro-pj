@@ -1,6 +1,7 @@
 import io
 from datetime import datetime
 from html import escape
+from urllib.parse import quote
 
 import hmac
 import importlib
@@ -136,7 +137,25 @@ st.markdown(f"""
               border-radius: 10px; padding: 1rem 1.2rem; margin-bottom: 1rem;
               background: color-mix(in srgb, {DOURADO} 7%, transparent); }}
   .vitrine h3 {{ margin-top: 0; }}
+  /* Botões fixos no canto inferior direito */
+  .flutuantes {{ position: fixed; right: 1.2rem; bottom: 1.2rem; z-index: 999990;
+                 display: flex; flex-direction: column; align-items: flex-end; gap: .55rem; }}
+  .flutuantes a {{ display: inline-flex; align-items: center; gap: .5rem; text-decoration: none;
+                   font-weight: 600; font-size: .9rem; border-radius: 999px;
+                   padding: .6rem 1.05rem; box-shadow: 0 3px 12px rgba(0, 0, 0, .25);
+                   transition: transform .15s; }}
+  .flutuantes a:hover {{ transform: translateY(-2px); text-decoration: none; }}
+  .flutuantes .plus {{ background: {DOURADO}; color: #0f1a2e !important; }}
+  .flutuantes .whats {{ background: #25d366; color: #0b2e17 !important; }}
+  .flutuantes svg {{ width: 1.35rem; height: 1.35rem; flex: none; }}
+  .flutuantes .curto {{ display: none; }}
+  /* Espaço no fim da página para os botões não cobrirem o rodapé */
+  [data-testid="stMainBlockContainer"] {{ padding-bottom: 8rem; }}
   @media (max-width: 640px) {{
+    .flutuantes {{ right: .8rem; bottom: .8rem; }}
+    .flutuantes a {{ font-size: .8rem; padding: .5rem .85rem; }}
+    .flutuantes .longo {{ display: none; }}
+    .flutuantes .curto {{ display: inline; }}
     .tabcat .linha {{ grid-template-columns: minmax(0, 1.6fr) 1.2fr 1fr; }}
     .tabcat .qtd {{ display: none; }}
   }}
@@ -280,6 +299,68 @@ def grafico_entradas_mes(mensal):
         )
         .properties(height=280)
     )
+
+
+# Uma cor por despesa nas linhas: paleta categórica validada (contraste e daltonismo)
+# nos dois fundos; a ordem é fixa e vai do maior para o menor. O total é cinza tracejado.
+CORES_SERIES = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9",
+                "#e66767"]
+COR_TOTAL = "#8c8c8c"
+MAX_SERIES = 7   # da 8ª em diante, juntas em "Outros"
+
+
+def grafico_linhas(longo, nome_total="Total"):
+    """Uma linha por despesa (Mês, Fornecedor, Valor) e uma linha com o total do mês.
+
+    Passando o mouse, uma linha vertical mostra os valores de todas as despesas do mês.
+    """
+    ordem = longo.groupby("Fornecedor")["Valor"].sum().sort_values(ascending=False).index
+    if len(ordem) > MAX_SERIES + 1:
+        resto = set(ordem[MAX_SERIES:])
+        longo = longo.assign(Fornecedor=longo["Fornecedor"].where(
+            ~longo["Fornecedor"].isin(resto), f"Outros ({len(resto)})"))
+        longo = longo.groupby(["Mês", "Fornecedor"], as_index=False)["Valor"].sum()
+        ordem = list(ordem[:MAX_SERIES]) + [f"Outros ({len(resto)})"]
+    series = list(ordem)
+    meses = sorted(longo["Mês"].unique())
+    total = longo.groupby("Mês", as_index=False)["Valor"].sum().assign(Fornecedor=nome_total)
+    dados = pd.concat([longo, total], ignore_index=True)
+    dados["Rótulo"] = dados["Mês"].map(rotulo_mes)
+    dados["Texto"] = dados["Valor"].map(formatar_reais)
+    rotulos = [rotulo_mes(m) for m in meses]
+
+    # Tabela larga para a dica da linha vertical: um campo por despesa (c0, c1...)
+    largo = dados.pivot_table(index="Rótulo", columns="Fornecedor", values="Valor",
+                              aggfunc="sum")
+    nomes = [nome_total] + series
+    largo = largo.reindex(columns=nomes)
+    campos = {n: f"c{i}" for i, n in enumerate(nomes)}
+    largo = largo.map(lambda v: "—" if pd.isna(v) else formatar_reais(v)) \
+        .rename(columns=campos).reset_index()
+
+    x = alt.X("Rótulo:N", sort=rotulos, title=None, axis=alt.Axis(labelAngle=0))
+    cor = alt.Color("Fornecedor:N", sort=nomes,
+                    scale=alt.Scale(domain=nomes, range=[COR_TOTAL] + CORES_SERIES[:len(series)]),
+                    legend=alt.Legend(title=None, orient="top", columns=3, labelLimit=260,
+                                      symbolType="stroke", symbolStrokeWidth=3))
+    tracejado = alt.condition(alt.datum.Fornecedor == nome_total, alt.value([6, 4]),
+                              alt.value([1, 0]))
+    espessura = alt.condition(alt.datum.Fornecedor == nome_total, alt.value(3), alt.value(2))
+    base = alt.Chart(dados).encode(x=x, y=alt.Y("Valor:Q", axis=EIXO_REAIS), color=cor)
+    linhas = base.mark_line().encode(strokeDash=tracejado,
+                                                          strokeWidth=espessura)
+    pontos = base.mark_point(filled=True, size=64, opacity=1).encode(
+        tooltip=[alt.Tooltip("Fornecedor:N", title="Despesa"),
+                 alt.Tooltip("Rótulo:N", title="Mês"), alt.Tooltip("Texto:N", title="Valor")])
+    passa = alt.selection_point(nearest=True, on="pointerover", fields=["Rótulo"], empty=False,
+                                clear="pointerout")
+    regua = alt.Chart(largo).mark_rule(color=COR_TOTAL, strokeWidth=1).encode(
+        x=x,
+        opacity=alt.condition(passa, alt.value(0.7), alt.value(0)),
+        tooltip=[alt.Tooltip("Rótulo:N", title="Mês")]
+        + [alt.Tooltip(f"{campos[n]}:N", title=n) for n in nomes],
+    ).add_params(passa)
+    return (linhas + pontos + regua).properties(height=380)
 
 
 def tabela_em_reais(df, colunas_reais, colunas_pct=()):
@@ -436,10 +517,45 @@ def rodape():
         unsafe_allow_html=True)
 
 
+ICONE_WHATSAPP = (
+    '<svg viewBox="0 0 32 32" aria-hidden="true"><path fill="none" stroke="currentColor" '
+    'stroke-width="2.4" stroke-linejoin="round" d="M16 3.5C9.1 3.5 3.5 9 3.5 15.8c0 2.4.7 '
+    '4.6 1.9 6.5L4 28l5.9-1.5a12.6 12.6 0 0 0 6.1 1.6c6.9 0 12.5-5.5 12.5-12.3S22.9 3.5 16 '
+    '3.5z"/><path fill="currentColor" d="M11.6 9.6c.4 0 .8 0 1.1.8l1.2 2.8c.1.3.1.6-.1.9l-.8 '
+    '1c-.2.2-.2.5 0 .8.9 1.6 2.3 3 4 3.9.3.2.6.1.8-.1l1-1.2c.2-.3.5-.3.8-.2l2.8 1.3c.3.2.5.4'
+    '.5.7 0 1.6-1.3 3-3 3-4.9-.4-9.4-4.9-9.8-9.8 0-1.7 1.4-2.9 1.5-2.9z"/></svg>')
+
+
+def _whatsapp_com_texto(link, texto):
+    """Link do WhatsApp (wa.me) com a mensagem já escrita."""
+    if not link or "wa.me" not in link:
+        return link
+    return f"{link}{'&' if '?' in link else '?'}text={quote(texto)}"
+
+
+def botoes_flutuantes():
+    """Assinar o Plus e falar com um especialista: sempre à vista, no canto da tela."""
+    botoes = []
+    assinar = LINK_ASSINATURA or _whatsapp_com_texto(
+        LINK_CONSULTORIA, "Olá! Quero assinar a área Plus do Contas em Dia.")
+    if assinar and not PLUS:
+        botoes.append(f'<a class="plus" href="{escape(assinar)}" target="_blank" '
+                      'rel="noopener">⭐ Assinar área Plus</a>')
+    if LINK_CONSULTORIA:
+        falar = _whatsapp_com_texto(LINK_CONSULTORIA, "Olá! Quero falar com um especialista "
+                                                      "financeiro/contábil.")
+        botoes.append(f'<a class="whats" href="{escape(falar)}" target="_blank" rel="noopener">'
+                      f'{ICONE_WHATSAPP}<span class="longo">Falar com um especialista financeiro/contábil'
+                      '</span><span class="curto">Falar com especialista</span></a>')
+    if botoes:
+        st.markdown(f'<div class="flutuantes">{"".join(botoes)}</div>', unsafe_allow_html=True)
+
+
 # O conteúdo vai num container e o rodapé é desenhado logo depois: assim ele aparece
 # embaixo de qualquer aba, e também quando a tela para antes (st.stop)
 corpo = st.container()
 rodape()
+botoes_flutuantes()
 
 with corpo:
     if not arquivos:
@@ -879,7 +995,7 @@ with corpo:
             secao_cnpj(lembrar=False)
             st.caption("🔒 Nada é guardado: as classificações valem até você fechar o app. "
                        "Para corrigir qualquer fornecedor e o app lembrar nas próximas vezes, "
-                       "use a classificação da área ⭐ Plus.")
+                       "use a versão ⭐ Plus.")
 
         with tab_vitrine:
             st.markdown('<div class="vitrine"><h3>⭐ Contas em Dia Plus</h3>'
@@ -914,7 +1030,7 @@ with corpo:
             if LINK_ASSINATURA:
                 b1.link_button("⭐ Quero o Plus", LINK_ASSINATURA, type="primary")
             if LINK_CONSULTORIA:
-                b2.link_button("💬 Falar com um consultor", LINK_CONSULTORIA)
+                b2.link_button("💬 Falar com um especialista", LINK_CONSULTORIA)
             if not LINK_ASSINATURA and not LINK_CONSULTORIA:
                 st.caption("As assinaturas abrem em breve.")
         st.stop()
@@ -931,10 +1047,11 @@ with corpo:
                                     "entregue no ano seguinte.")
             st.caption(f"Para a declaração entregue em {ano + 1}.")
             st.warning("Esta é uma lista para **conferir com seu contador**, não a declaração. "
-                       "Só deduz o que tem comprovante (recibo ou nota com CPF/CNPJ). Educação "
-                       "tem limite anual por pessoa e vale só para ensino regular; remédios de "
-                       "farmácia, academia e cursos livres não deduzem; plano de saúde, só do "
-                       "titular e dependentes declarados.", icon="⚠️")
+                       "Só se deduz o que tem comprovação (notas fiscais ou recibo com "
+                       "CPF/CNPJ). **Educação:** possui limite anual por pessoa e vale só para "
+                       "ensino regular; remédios de farmácia, academia e cursos livres não são "
+                       "dedutíveis; **plano de saúde:** só do titular e dependentes declarados.",
+                       icon="⚠️")
             ir = plus.relatorio_ir(df_contas, ano)
             dedu, rend_pj, rend_pf = ir["deducoes"], ir["rendimentos_pj"], ir["rendimentos_pf"]
 
@@ -995,17 +1112,9 @@ with corpo:
             st.info("Nenhuma compra parcelada com parcelas a vencer. As parcelas são lidas da "
                     "fatura do cartão em PDF (BB), onde aparecem como \"PARC 03/10\".")
         else:
-            crono = cronograma.assign(Rótulo=cronograma["Mês"].map(rotulo_mes),
-                                      Texto=cronograma["Valor"].map(formatar_reais))
-            dica("Passe o mouse sobre as barras para ver os valores")
-            st.altair_chart(
-                alt.Chart(crono).mark_bar(color=COR_SAIDAS, cornerRadiusEnd=4).encode(
-                    x=alt.X("Rótulo:N", sort=list(crono["Rótulo"]), title=None,
-                            axis=alt.Axis(labelAngle=0)),
-                    y=alt.Y("Valor:Q", axis=EIXO_REAIS),
-                    tooltip=[alt.Tooltip("Rótulo:N", title="Mês"),
-                             alt.Tooltip("Texto:N", title="Parcelas")],
-                ).properties(height=260), width="stretch")
+            dica("Passe o mouse sobre o gráfico para ver as parcelas de cada mês")
+            st.altair_chart(grafico_linhas(plus.cronograma_por_compra(parcelas),
+                                           "Total das parcelas"), width="stretch")
             ver = parcelas.assign(**{"Parcela": parcelas["Parcela atual"].astype(str) + "/"
                                      + parcelas["Parcelas"].astype(str),
                                      "Última parcela": parcelas["Última parcela"].map(rotulo_mes)})
@@ -1020,15 +1129,28 @@ with corpo:
         if recorrentes.empty:
             st.info("Envie extratos de pelo menos 3 meses para encontrar os gastos que se repetem.")
         else:
-            st.dataframe(tabela_em_reais(recorrentes, ["Por mês"]), hide_index=True,
-                         width="stretch",
-                         column_config={"Por mês": st.column_config.TextColumn(
-                             "Por mês", help="Valor fixo e conta mensal: o valor típico. "
-                                             "Gasto frequente: média por mês.")})
             st.caption("**Valor fixo:** mesmo valor todo mês (assinatura, seguro). **Conta "
                        "mensal:** uma vez por mês, valor varia (luz, plano de saúde). **Gasto "
-                       "frequente:** quase todo mês, várias vezes (padaria, mercado). "
-                       "A data prevista repete o dia de costume.")
+                       "frequente:** quase todo mês, várias vezes (padaria, mercado).")
+            mensais = recorrentes[recorrentes["Tipo"].isin([plus.FIXO, plus.CONTA_MENSAL])]
+            frequentes = recorrentes[recorrentes["Tipo"] == plus.FREQUENTE]
+            if not mensais.empty:
+                st.markdown("**Valor fixo e contas mensais**")
+                dica("Passe o mouse sobre o gráfico para ver os valores de cada mês")
+                st.altair_chart(grafico_linhas(plus.historico_recorrentes(df_contas, mensais),
+                                               "Total por mês"), width="stretch")
+                with st.expander("📋 Ver em tabela, com a data prevista do próximo"):
+                    st.dataframe(tabela_em_reais(mensais, ["Por mês"]), hide_index=True,
+                                 width="stretch",
+                                 column_config={"Por mês": st.column_config.TextColumn(
+                                     "Por mês", help="O valor típico de um mês.")})
+                    st.caption("A data prevista repete o dia de costume.")
+            if not frequentes.empty:
+                st.markdown("**Gastos frequentes**")
+                st.dataframe(tabela_em_reais(frequentes.drop(columns="Próxima prevista"),
+                                             ["Por mês"]), hide_index=True, width="stretch",
+                             column_config={"Por mês": st.column_config.TextColumn(
+                                 "Por mês", help="Média por mês.")})
 
     # ----------------------------------------------------------------------------
     with tab_saude:
@@ -1056,7 +1178,7 @@ with corpo:
             st.markdown("**Quer ajuda para virar o jogo?** Um consultor olha esses números com "
                         "você e monta um plano.")
             if LINK_CONSULTORIA:
-                st.link_button("💬 Falar com um consultor", LINK_CONSULTORIA, type="primary")
+                st.link_button("💬 Falar com um especialista", LINK_CONSULTORIA, type="primary")
 
     # ----------------------------------------------------------------------------
     with tab_classificar:

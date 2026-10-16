@@ -66,8 +66,11 @@ A área Plus abre com um código de acesso. No Streamlit Cloud: app → Settings
 ```
 PLUS_CODIGOS = ["codigo-1", "codigo-2"]    # ou "codigo-1, codigo-2"
 PLUS_LINK = "https://..."                 # opcional: link de pagamento ("Quero o Plus")
-CONTATO_CONSULTORIA = "https://wa.me/..." # opcional: botão "Falar com um consultor"
+CONTATO_CONSULTORIA = "https://wa.me/..." # opcional: botão "Falar com um especialista"
 ```
+Os botões "⭐ Assinar área Plus" e "Falar com um especialista" ficam sempre no canto inferior
+direito. Sem `PLUS_LINK`, o "Assinar" abre o WhatsApp de `CONTATO_CONSULTORIA` com a mensagem
+pronta; sem nenhum dos dois, os botões não aparecem.
 Para tirar o acesso de alguém, apague o código dele da lista. Sem `PLUS_CODIGOS`, a área
 fica fechada para todos e só a vitrine aparece.
 
