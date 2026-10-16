@@ -870,12 +870,12 @@ def ler_fatura_bb(texto, conta="BB Cartão"):
         if normalizar(descricao).startswith("pgto"):
             continue  # pagamento da fatura anterior
         valor = -converter_valor(valor)  # compra = saída (negativo); estorno = positivo
-        if re.search(r"\bPARC \d{2}/\d{2}\b", descricao):
-            data = data_fech
-        else:
-            ano = data_fech.year if (int(mes), int(dia)) <= (data_fech.month, data_fech.day) \
-                else data_fech.year - 1
-            data = pd.Timestamp(year=ano, month=int(mes), day=int(dia))
+        ano = data_fech.year if (int(mes), int(dia)) <= (data_fech.month, data_fech.day) \
+            else data_fech.year - 1
+        data_impressa = pd.Timestamp(year=ano, month=int(mes), day=int(dia))
+        parc = re.search(r"\bPARC (\d{2})/(\d{2})\b", descricao)
+        # Parcela: a data impressa é a da compra original; o gasto entra no fechamento
+        data = data_fech if parc else data_impressa
         fornecedor = fornecedor_da_fatura(descricao)
         descricao = re.sub(r"\s+BR$", "", re.sub(r"\s+", " ", descricao))
         if valor > 0:
@@ -888,10 +888,13 @@ def ler_fatura_bb(texto, conta="BB Cartão"):
                 categoria = SECOES_FATURA_BB.get(secao, CATEGORIA_PADRAO)
         linhas.append({"Data": data, "Descrição": descricao, "Valor": valor,
                        "Categoria": categoria, "Fornecedor": fornecedor,
-                       "_secao": secao or ""})
+                       "_secao": secao or "",
+                       "Parcela": int(parc.group(1)) if parc else None,
+                       "Parcelas": int(parc.group(2)) if parc else None,
+                       "DataCompra": data_impressa if parc else pd.NaT})
 
     t = pd.DataFrame(linhas, columns=["Data", "Descrição", "Valor", "Categoria", "Fornecedor",
-                                      "_secao"])
+                                      "_secao", "Parcela", "Parcelas", "DataCompra"])
     t["Tipo"] = ["Entrada" if v > 0 else "Saída" for v in t["Valor"]]
     t["Conta"] = conta
     t["Mês"] = t["Data"].dt.to_period("M").astype(str)

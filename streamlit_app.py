@@ -2,6 +2,7 @@ import io
 from datetime import datetime
 from html import escape
 
+import hmac
 import importlib
 import sys
 
@@ -12,7 +13,7 @@ import streamlit as st
 # Depois de uma atualização, o Streamlit Cloud recarrega este arquivo mas pode
 # manter na memória a versão antiga de financeiro.py e regras.py, e o app quebra
 # com ImportError até alguém reiniciar. Recarregá-los aqui evita isso.
-for _modulo in ("financeiro", "regras"):   # nessa ordem: regras importa financeiro
+for _modulo in ("financeiro", "regras", "plus"):   # nessa ordem: os outros importam financeiro
     if _modulo in sys.modules:
         importlib.reload(sys.modules[_modulo])
 
@@ -38,6 +39,7 @@ from financeiro import (
     resumo_subcategorias,
 )
 from regras import RepositorioRegras, consultar_cnpj, juntar, nova_regra, regras_vazias
+import plus
 
 # ============================================================================
 # CONFIGURAÇÃO DO APP
@@ -119,6 +121,21 @@ st.markdown(f"""
   .rodape b {{ color: {DOURADO}; font-weight: 600; }}
   .tabcat .pct b {{ font-weight: inherit; min-width: 3.2em; text-align: right;
                     font-variant-numeric: tabular-nums; }}
+  /* Área Plus */
+  .cartoes {{ display: grid; gap: .8rem; margin: .4rem 0 1rem 0;
+              grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); }}
+  .cartao {{ border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+             border-left: 5px solid var(--cor); border-radius: 8px; padding: .7rem .9rem; }}
+  .cartao .titulo {{ font-size: .85rem; opacity: .75; }}
+  .cartao .valor {{ font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; }}
+  .cartao .status {{ font-size: .85rem; font-weight: 600; }}
+  .cartao .status::before {{ content: ""; display: inline-block; width: .65em; height: .65em;
+                             border-radius: 50%; background: var(--cor); margin-right: .35em; }}
+  .cartao .explica {{ font-size: .8rem; opacity: .75; margin-top: .3rem; line-height: 1.35; }}
+  .vitrine {{ border: 1px solid color-mix(in srgb, {DOURADO} 55%, transparent);
+              border-radius: 10px; padding: 1rem 1.2rem; margin-bottom: 1rem;
+              background: color-mix(in srgb, {DOURADO} 7%, transparent); }}
+  .vitrine h3 {{ margin-top: 0; }}
   @media (max-width: 640px) {{
     .tabcat .linha {{ grid-template-columns: minmax(0, 1.6fr) 1.2fr 1fr; }}
     .tabcat .qtd {{ display: none; }}
@@ -307,6 +324,7 @@ def _regras_dos_secrets():
 
 regras_privadas = _regras_dos_secrets()
 st.session_state.setdefault("regras_pessoais", regras_vazias())
+st.session_state.setdefault("regras_sessao", regras_vazias())   # só até fechar o app
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -362,6 +380,50 @@ with st.sidebar:
         help="Pix e TED para você mesmo em outro banco viram transferência entre "
              "contas, e não gasto. Use nome e sobrenome como aparecem no extrato."
     )
+
+# ============================================================================
+# ÁREA PLUS (código de acesso)
+# ============================================================================
+def _lista_segredo(nome):
+    """Segredo que pode ser lista (TOML) ou texto separado por vírgulas."""
+    valor = ler_segredo(nome)
+    if not valor:
+        return []
+    if isinstance(valor, str):
+        valor = valor.split(",")
+    return [str(v).strip() for v in valor if str(v).strip()]
+
+
+def codigo_valido(codigo):
+    codigo = (codigo or "").strip()
+    return bool(codigo) and any(hmac.compare_digest(codigo.encode(), c.encode())
+                                for c in _lista_segredo("PLUS_CODIGOS"))
+
+
+LINK_ASSINATURA = ler_segredo("PLUS_LINK")
+LINK_CONSULTORIA = ler_segredo("CONTATO_CONSULTORIA")
+st.session_state.setdefault("plus", False)
+
+with st.sidebar:
+    st.divider()
+    if st.session_state["plus"]:
+        st.markdown("⭐ **Plus ativo**")
+        if st.button("Sair do Plus"):
+            st.session_state["plus"] = False
+            st.rerun()
+    else:
+        with st.expander("⭐ Tenho um código Plus"):
+            with st.form("form_plus", clear_on_submit=True, border=False):
+                codigo = st.text_input("Código de acesso", type="password")
+                if st.form_submit_button("Entrar"):
+                    if codigo_valido(codigo):
+                        st.session_state["plus"] = True
+                        st.rerun()
+                    else:
+                        st.error("Código inválido.")
+            if LINK_ASSINATURA:
+                st.link_button("Quero o Plus", LINK_ASSINATURA)
+PLUS = st.session_state["plus"]
 
 # ============================================================================
 # PROCESSAMENTO
@@ -491,7 +553,9 @@ with corpo:
     todos = consolidar(tabelas, nome_titular)
     # Regras lembradas (compartilhadas + pessoais) vencem as palavras-chave
     regras_comp = regras_compartilhadas(st.session_state["versao_regras"])
-    regras_todas = juntar(juntar(regras_comp, regras_privadas), st.session_state["regras_pessoais"])
+    regras_todas = juntar(juntar(juntar(regras_comp, regras_privadas),
+                                 st.session_state["regras_sessao"]),
+                          st.session_state["regras_pessoais"])
     todos = aplicar_regras(todos, regras_todas)
 
     with st.expander(f"📂 Arquivos lidos ({len(arquivos)})",
@@ -528,9 +592,12 @@ with corpo:
     aplicado = -internas.loc[internas["Categoria"] == CATEGORIA_APLICACAO, "Valor"].sum()
 
     meses = max(1, df["Mês"].nunique())
-    (tab_resumo, tab_entradas, tab_saidas, tab_mes, tab_transacoes, tab_download,
-     tab_classificar) = st.tabs(["📊 Resumo", "💰 Entradas", "💸 Saídas", "📅 Mês a Mês",
-                                 "📋 Transações", "📥 Download", "🏷️ Classificar"])
+    nomes_abas = ["📊 Resumo", "💰 Entradas", "💸 Saídas", "📅 Mês a Mês", "📋 Transações",
+                  "📥 Download"]
+    nomes_abas += (["⭐ Imposto de Renda", "⭐ Fixos e parcelas", "⭐ Saúde financeira",
+                    "⭐ Classificar"] if PLUS else ["🔎 Consultar CNPJ", "⭐ Plus"])
+    abas = st.tabs(nomes_abas)
+    tab_resumo, tab_entradas, tab_saidas, tab_mes, tab_transacoes, tab_download = abas[:6]
 
     # Entradas agrupadas por tipo (recebido de empresas, de pessoas, salário...)
     df_entradas = df[df["Tipo"] == "Entrada"].assign(
@@ -635,7 +702,8 @@ with corpo:
             outros = cats.loc[cats["Categoria"] == "OUTRO", "% das saídas"]
             if not outros.empty and outros.iloc[0] > 20:
                 st.caption(f"ℹ️ {outros.iloc[0]:.0f}% das saídas ficaram em OUTRO. "
-                           "Classifique na aba 🏷️ Classificar.")
+                           + ("Classifique na aba ⭐ Classificar." if PLUS else
+                              "Veja a aba 🔎 Consultar CNPJ."))
 
     # ----------------------------------------------------------------------------
     with tab_mes:
@@ -687,6 +755,7 @@ with corpo:
         hoje = datetime.now().strftime("%Y%m%d")
 
         # CSV no padrão do Excel brasileiro: ponto e vírgula e vírgula decimal
+        exportar = exportar.drop(columns=["DataCompra", "FornecedorOriginal"], errors="ignore")
         csv = exportar.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig")
         st.download_button("📥 Download CSV", csv, f"extrato_{hoje}.csv", "text/csv")
 
@@ -700,6 +769,295 @@ with corpo:
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
+
+    # ============================================================================
+    # CLASSIFICAÇÃO E ÁREA PLUS
+    # ============================================================================
+    SEM_SUB = "—"  # categoria sem subcategorias
+    todas_subs = [SEM_SUB] + sorted({x for c in categorias_editaveis()
+                                     for x in subcategorias_de(c) if x})
+    saidas_forn = todos[todos["Tipo"] == "Saída"].assign(
+        chave=lambda d: d["FornecedorOriginal"].map(chave_fornecedor))
+    # Recorrentes, parcelas e IR olham todo o histórico das contas escolhidas (o filtro
+    # de período cortaria parcelas e meses); a saúde financeira segue o período
+    df_contas = todos[todos["Conta"].isin(filtro_contas)]
+    recorrentes = plus.gastos_recorrentes(df_contas)
+    parcelas, cronograma = plus.parcelas_futuras(df_contas)
+    compromissos = plus.compromissos_mensais(recorrentes)
+    parcelas_proximo = float(cronograma["Valor"].iloc[0]) if not cronograma.empty else 0.0
+    anos_ir = sorted(df_contas["Data"].dt.year.unique(), reverse=True)
+
+    def subcategoria_valida(categoria, sub):
+        validas = subcategorias_de(categoria)
+        return sub if sub in validas else validas[-1]
+
+    def secao_cnpj(lembrar):
+        """Consulta pública do CNPJ. lembrar=True (Plus) grava as regras; senão, valem só
+        até fechar o app."""
+        if st.session_state.get("aviso_regras"):
+            st.success(st.session_state.pop("aviso_regras"), icon="✅")
+        conhecidas = set(regras_todas["chave"])
+        pend = saidas_forn[saidas_forn["Categoria"].isin(["OUTRO", "TRANSFERÊNCIA"])
+                           & ~saidas_forn["chave"].isin(conhecidas)].copy()
+        pend["CNPJ"] = pend["Descrição"].map(extrair_cnpj)
+        pend = (pend.dropna(subset=["CNPJ"]).groupby(["chave", "CNPJ"])
+                .agg(Fornecedor=("Fornecedor", "first"), Total=("Valor", lambda v: -v.sum()))
+                .sort_values("Total", ascending=False).reset_index())
+        if pend.empty:
+            st.caption("Nenhum fornecedor pendente com CNPJ no extrato.")
+            return
+        dica(f"{len(pend)} fornecedor(es) sem categoria têm CNPJ na descrição (Pix para empresas). "
+             "A consulta usa os dados públicos da Receita Federal (BrasilAPI, gratuita).")
+        if st.button(f"🔎 Consultar {len(pend)} CNPJ(s)"):
+            linhas = []
+            barra = st.progress(0.0, text="Consultando a Receita...")
+            for n, r in enumerate(pend.itertuples(), start=1):
+                info = consultar_cnpj_cache(r.CNPJ)
+                sugestao = categoria_do_cnae(info["cnae"]) if info else None
+                linhas.append({
+                    "Aplicar": sugestao is not None, "chave": r.chave, "Fornecedor": r.Fornecedor,
+                    "CNPJ": r.CNPJ, "Nome na Receita": info["nome"] if info else "(não encontrado)",
+                    "Atividade principal (CNAE)": f"{info['cnae']} · {info['atividade']}" if info else "",
+                    "Categoria": sugestao[0] if sugestao else "OUTRO",
+                    "Subcategoria": (sugestao[1] or SEM_SUB) if sugestao else SEM_SUB,
+                    "cnae": info["cnae"] if info else "", "mei": bool(info and info["mei"]),
+                    "Total": formatar_reais(r.Total),
+                })
+                barra.progress(n / len(pend), text=f"Consultando a Receita... {n}/{len(pend)}")
+            barra.empty()
+            st.session_state["sugestoes_cnpj"] = pd.DataFrame(linhas)
+
+        sug = st.session_state.get("sugestoes_cnpj")
+        if sug is None or sug.empty:
+            return
+        dica("Confira as sugestões; ajuste a categoria se precisar e desmarque o que não quiser")
+        sug_edit = st.data_editor(
+            sug, hide_index=True, width="stretch", key="editor_cnpj",
+            column_order=["Aplicar", "Fornecedor", "Nome na Receita",
+                          "Atividade principal (CNAE)", "Categoria", "Subcategoria", "Total"],
+            disabled=["Fornecedor", "Nome na Receita", "Atividade principal (CNAE)", "Total"],
+            column_config={
+                "Categoria": st.column_config.SelectboxColumn(options=categorias_editaveis()),
+                "Subcategoria": st.column_config.SelectboxColumn(options=todas_subs),
+            })
+        marcadas = sug_edit[sug_edit["Aplicar"]]
+        if not st.button(f"✅ Aplicar {len(marcadas)} sugestão(ões)", disabled=marcadas.empty):
+            return
+        novas, pessoais_mei = [], []
+        for _, r in marcadas.iterrows():
+            sub = subcategoria_valida(r["Categoria"], r["Subcategoria"])
+            nome = r["Nome na Receita"] if not r["Nome na Receita"].startswith("(") \
+                else r["Fornecedor"]
+            regra = nova_regra(r["chave"], nome, r["Categoria"], sub, "cnpj", r["CNPJ"], r["cnae"])
+            # MEI tem o nome da pessoa no CNPJ: não vai para o arquivo público
+            (pessoais_mei if r.get("mei") else novas).append(regra)
+        st.session_state.pop("sugestoes_cnpj", None)
+        if lembrar:
+            try:
+                salvar_regras(pd.concat(novas) if novas else regras_vazias(),
+                              pd.concat(pessoais_mei) if pessoais_mei else regras_vazias(),
+                              "CNPJ " + ", ".join(marcadas["Fornecedor"].head(5)))
+            except Exception as e:
+                st.error(f"Não foi possível salvar as regras: {e}")
+                return
+        else:
+            st.session_state["regras_sessao"] = juntar(st.session_state["regras_sessao"],
+                                                       pd.concat(novas + pessoais_mei))
+            st.session_state["versao_regras"] += 1
+            st.session_state["aviso_regras"] = (f"{len(marcadas)} fornecedor(es) "
+                                                "classificado(s) até você fechar o app")
+        st.rerun()
+
+    if not PLUS:
+        tab_cnpj, tab_vitrine = abas[6:]
+
+        with tab_cnpj:
+            st.subheader("Consultar CNPJ na Receita")
+            st.markdown("Pix feitos a empresas trazem o CNPJ na descrição. O app consulta a "
+                        "**atividade principal** da empresa nos dados públicos da Receita "
+                        "Federal e sugere a categoria — você confere e aplica.")
+            secao_cnpj(lembrar=False)
+            st.caption("🔒 Nada é guardado: as classificações valem até você fechar o app. "
+                       "Para corrigir qualquer fornecedor e o app lembrar nas próximas vezes, "
+                       "use a classificação da área ⭐ Plus.")
+
+        with tab_vitrine:
+            st.markdown('<div class="vitrine"><h3>⭐ Contas em Dia Plus</h3>'
+                        'Análises prontas a partir dos mesmos extratos — continua sem guardar '
+                        'nada.</div>', unsafe_allow_html=True)
+            st.markdown("**O que o Plus já encontrou nos seus extratos:**")
+            v1, v2, v3 = st.columns(3)
+            v1.metric("Contas que se repetem todo mês", formatar_reais(compromissos),
+                      help="Assinaturas, mensalidades e contas mensais ainda ativas.")
+            v2.metric(f"{len(parcelas)} compra(s) parcelada(s) a pagar",
+                      formatar_reais(parcelas["Total restante"].sum()),
+                      help="Parcelas do cartão que ainda vão vencer.")
+            if anos_ir:
+                dedu = plus.relatorio_ir(df_contas, anos_ir[0])["deducoes"]
+                v3.metric(f"Possíveis deduções do IR ({anos_ir[0]})",
+                          formatar_reais(dedu["Total"].sum()),
+                          help="Saúde, educação, previdência privada e pensão.")
+            st.markdown("""
+            - **⭐ Imposto de Renda** — despesas que podem ser deduzidas (saúde, educação,
+              PGBL, pensão) com o CNPJ de quem recebeu, e os rendimentos recebidos de empresas
+              e de pessoas. Pronto para levar ao contador, em planilha.
+            - **⭐ Fixos e parcelas** — o que se repete todo mês, a data prevista do
+              próximo, e as parcelas do cartão que ainda faltam (quantas e quanto, mês a mês).
+            - **⭐ Saúde financeira** — indicadores com semáforo: quanto sobra, meses no
+              vermelho, dependência de uma fonte de renda, compromissos e reserva de emergência.
+            - **⭐ Classificar** — corrija a categoria de qualquer fornecedor e o app lembra
+              nas próximas vezes.
+            """)
+            st.markdown("**Como ter acesso:** digite seu código em *⭐ Tenho um código Plus*, "
+                        "no menu lateral.")
+            b1, b2 = st.columns(2)
+            if LINK_ASSINATURA:
+                b1.link_button("⭐ Quero o Plus", LINK_ASSINATURA, type="primary")
+            if LINK_CONSULTORIA:
+                b2.link_button("💬 Falar com um consultor", LINK_CONSULTORIA)
+            if not LINK_ASSINATURA and not LINK_CONSULTORIA:
+                st.caption("As assinaturas abrem em breve.")
+        st.stop()
+
+    tab_ir, tab_recorrentes, tab_saude, tab_classificar = abas[6:]
+
+    # ----------------------------------------------------------------------------
+    with tab_ir:
+        if not anos_ir:
+            st.info("Não há transações.")
+        else:
+            ano = st.selectbox("Ano-calendário", anos_ir,
+                               help="O ano em que os pagamentos aconteceram. A declaração é "
+                                    "entregue no ano seguinte.")
+            st.caption(f"Para a declaração entregue em {ano + 1}.")
+            st.warning("Esta é uma lista para **conferir com seu contador**, não a declaração. "
+                       "Só deduz o que tem comprovante (recibo ou nota com CPF/CNPJ). Educação "
+                       "tem limite anual por pessoa e vale só para ensino regular; remédios de "
+                       "farmácia, academia e cursos livres não deduzem; plano de saúde, só do "
+                       "titular e dependentes declarados.", icon="⚠️")
+            ir = plus.relatorio_ir(df_contas, ano)
+            dedu, rend_pj, rend_pf = ir["deducoes"], ir["rendimentos_pj"], ir["rendimentos_pf"]
+
+            st.subheader("Possíveis deduções")
+            if dedu.empty:
+                st.info("Nenhum pagamento de saúde, educação, previdência privada ou pensão "
+                        "encontrado neste ano.")
+            else:
+                por_grupo = dedu.groupby("Grupo")["Total"].sum()
+                for col, (grupo, total) in zip(st.columns(len(por_grupo)), por_grupo.items()):
+                    col.metric(grupo, formatar_reais(total))
+                st.dataframe(tabela_em_reais(dedu, ["Total"]), hide_index=True, width="stretch",
+                             column_order=["Grupo", "Fornecedor", "CNPJ", "Total", "Pagamentos"])
+                st.caption("O CNPJ aparece quando está no extrato (Pix). Para os outros, pegue no "
+                           "recibo ou na nota fiscal.")
+
+            st.subheader("Rendimentos")
+            r1, r2 = st.columns(2)
+            with r1:
+                st.markdown("**Recebidos de empresas**")
+                if rend_pj.empty:
+                    st.caption("Nenhum neste ano.")
+                else:
+                    st.dataframe(tabela_em_reais(rend_pj, ["Total"]), hide_index=True,
+                                 width="stretch",
+                                 column_order=["Fornecedor", "CNPJ", "Total", "Pagamentos"])
+                    st.caption("Confira com o informe de rendimentos que cada empresa envia.")
+            with r2:
+                st.markdown("**Recebidos de pessoas, por mês**")
+                if rend_pf.empty:
+                    st.caption("Nenhum neste ano.")
+                else:
+                    st.dataframe(tabela_em_reais(rend_pf.assign(Mês=rend_pf["Mês"].map(rotulo_mes)),
+                                                 ["Total"]), hide_index=True, width="stretch")
+                    st.caption("Se for pagamento por serviço, pode precisar de Carnê-Leão. Entre "
+                               "os recebidos podem estar transferências de família e reembolsos: "
+                               "separe com o contador.")
+
+            planilha_ir = io.BytesIO()
+            with pd.ExcelWriter(planilha_ir, engine="openpyxl") as planilha:
+                dedu.to_excel(planilha, sheet_name="Deduções", index=False)
+                rend_pj.to_excel(planilha, sheet_name="Rendimentos de empresas", index=False)
+                rend_pf.to_excel(planilha, sheet_name="Recebidos de pessoas", index=False)
+            st.download_button("📥 Baixar para o contador (XLSX)", planilha_ir.getvalue(),
+                               f"imposto_de_renda_{ano}.xlsx",
+                               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    # ----------------------------------------------------------------------------
+    with tab_recorrentes:
+        p1, p2, p3 = st.columns(3)
+        p1.metric("Contas que se repetem, por mês", formatar_reais(compromissos),
+                  help="Valor fixo e contas mensais ainda ativas.")
+        p2.metric("Parcelas no próximo mês", formatar_reais(parcelas_proximo))
+        p3.metric("Total de parcelas a pagar", formatar_reais(parcelas["Total restante"].sum()))
+
+        st.subheader("Parcelas do cartão a vencer")
+        if parcelas.empty:
+            st.info("Nenhuma compra parcelada com parcelas a vencer. As parcelas são lidas da "
+                    "fatura do cartão em PDF (BB), onde aparecem como \"PARC 03/10\".")
+        else:
+            crono = cronograma.assign(Rótulo=cronograma["Mês"].map(rotulo_mes),
+                                      Texto=cronograma["Valor"].map(formatar_reais))
+            dica("Passe o mouse sobre as barras para ver os valores")
+            st.altair_chart(
+                alt.Chart(crono).mark_bar(color=COR_SAIDAS, cornerRadiusEnd=4).encode(
+                    x=alt.X("Rótulo:N", sort=list(crono["Rótulo"]), title=None,
+                            axis=alt.Axis(labelAngle=0)),
+                    y=alt.Y("Valor:Q", axis=EIXO_REAIS),
+                    tooltip=[alt.Tooltip("Rótulo:N", title="Mês"),
+                             alt.Tooltip("Texto:N", title="Parcelas")],
+                ).properties(height=260), width="stretch")
+            ver = parcelas.assign(**{"Parcela": parcelas["Parcela atual"].astype(str) + "/"
+                                     + parcelas["Parcelas"].astype(str),
+                                     "Última parcela": parcelas["Última parcela"].map(rotulo_mes)})
+            st.dataframe(tabela_em_reais(ver, ["Valor da parcela", "Total restante"]),
+                         hide_index=True, width="stretch",
+                         column_order=["Fornecedor", "Conta", "Valor da parcela", "Parcela",
+                                       "Restam", "Total restante", "Última parcela"])
+            st.caption("Parcela = a última paga. Se faltar a fatura de algum mês recente, ela é "
+                       "estimada pelos meses que se passaram.")
+
+        st.subheader("Gastos que se repetem")
+        if recorrentes.empty:
+            st.info("Envie extratos de pelo menos 3 meses para encontrar os gastos que se repetem.")
+        else:
+            st.dataframe(tabela_em_reais(recorrentes, ["Por mês"]), hide_index=True,
+                         width="stretch",
+                         column_config={"Por mês": st.column_config.TextColumn(
+                             "Por mês", help="Valor fixo e conta mensal: o valor típico. "
+                                             "Gasto frequente: média por mês.")})
+            st.caption("**Valor fixo:** mesmo valor todo mês (assinatura, seguro). **Conta "
+                       "mensal:** uma vez por mês, valor varia (luz, plano de saúde). **Gasto "
+                       "frequente:** quase todo mês, várias vezes (padaria, mercado). "
+                       "A data prevista repete o dia de costume.")
+
+    # ----------------------------------------------------------------------------
+    with tab_saude:
+        guardado = st.number_input(
+            "Quanto você tem guardado hoje, em reais? (opcional)", min_value=0, step=1000,
+            help="Poupança, investimentos e caixinhas que você pode resgatar. "
+                                "Serve só para calcular a reserva de emergência e não é salvo.")
+        itens = plus.indicadores(df, compromissos, parcelas_proximo, guardado or None)
+        SINAL = {plus.BOM: ("#0ca30c", "Bom"), plus.ATENCAO: ("#fab219", "Atenção"),
+                 plus.ALERTA: ("#d03b3b", "Alerta")}
+        cartoes = ['<div class="cartoes">']
+        for i in itens:
+            cor, rotulo = SINAL[i["status"]]
+            cartoes.append(
+                f'<div class="cartao" style="--cor:{cor}"><div class="titulo">{escape(i["nome"])}'
+                f'</div><div class="valor">{escape(i["valor"])}</div>'
+                f'<div class="status">{rotulo}</div>'
+                f'<div class="explica">{escape(i["explicacao"])}</div></div>')
+        cartoes.append("</div>")
+        st.markdown("".join(cartoes), unsafe_allow_html=True)
+        st.caption(f"Período: {periodo}. Os limites são referências de educação financeira, "
+                   "não regras: cada situação é única. Meses só com a fatura do cartão (sem o "
+                   "extrato da conta) ficam de fora.")
+        if any(i["status"] != plus.BOM for i in itens):
+            st.markdown("**Quer ajuda para virar o jogo?** Um consultor olha esses números com "
+                        "você e monta um plano.")
+            if LINK_CONSULTORIA:
+                st.link_button("💬 Falar com um consultor", LINK_CONSULTORIA, type="primary")
+
     # ----------------------------------------------------------------------------
     with tab_classificar:
         if st.session_state.get("aviso_regras"):
@@ -707,9 +1065,8 @@ with corpo:
 
         with st.expander("❓ Como funciona esta aba", expanded=True):
             st.markdown("""
-            Aqui **você mesmo** corrige a categoria dos gastos — direto na tabela, sem
-            precisar pedir a ninguém. O app aprende e, nos próximos extratos, já classifica
-            esse fornecedor sozinho.
+            Aqui **você mesmo** corrige a categoria dos gastos — direto na tabela. O app
+            aprende e, nos próximos extratos, já classifica esse fornecedor sozinho.
 
             1. A tabela mostra cada **fornecedor** (por padrão, só os que ficaram em OUTRO ou
                TRANSFERÊNCIA). Desligue o botão acima da tabela para ver todos.
@@ -718,8 +1075,9 @@ with corpo:
             3. Clique em **💾 Salvar e lembrar**. Pronto: a regra vale para todos os
                lançamentos desse fornecedor, hoje e nos próximos meses.
 
-            **Consultar CNPJ:** para Pix feitos a empresas, o app consulta a atividade da
-            empresa na Receita Federal e sugere a categoria — você confere e aplica.
+            **Onde fica guardado:** empresas vão para a base compartilhada (dados públicos,
+            ajudam todo mundo). Pix para pessoas nunca vai para a base: fica nas suas regras
+            pessoais, que você baixa em arquivo e recarrega na próxima vez.
             """)
 
         st.subheader("Corrigir categorias por fornecedor")
@@ -727,9 +1085,7 @@ with corpo:
              "o app lembra nas próximas vezes, para todos os lançamentos desse fornecedor")
         so_pendentes = st.toggle("Mostrar só OUTRO e TRANSFERÊNCIA", value=True)
 
-        saidas = todos[todos["Tipo"] == "Saída"].assign(
-            chave=lambda d: d["FornecedorOriginal"].map(chave_fornecedor))
-        grupo = (saidas.groupby("chave")
+        grupo = (saidas_forn.groupby("chave")
                  .agg(Fornecedor=("Fornecedor", lambda v: max(v.unique(), key=len)),
                       Categoria=("Categoria", lambda v: v.mode().iat[0]),
                       Subcategoria=("Subcategoria", lambda v: v.mode().iat[0]),
@@ -738,12 +1094,9 @@ with corpo:
                  .sort_values("Total", ascending=False).reset_index())
         if so_pendentes:
             grupo = grupo[grupo["Categoria"].isin(["OUTRO", "TRANSFERÊNCIA"])].reset_index(drop=True)
-        SEM_SUB = "—"  # categoria sem subcategorias
         grupo["Subcategoria"] = grupo["Subcategoria"].replace("", SEM_SUB).fillna(SEM_SUB)
         grupo["Valor"] = grupo["Total"].map(formatar_reais)
 
-        todas_subs = [SEM_SUB] + sorted({x for c in categorias_editaveis()
-                                         for x in subcategorias_de(c) if x})
         editado = st.data_editor(
             grupo, hide_index=True, width="stretch", key=f"editor_regras_{so_pendentes}",
             column_order=["Fornecedor", "Categoria", "Subcategoria", "Valor", "Transações"],
@@ -761,9 +1114,8 @@ with corpo:
         if st.button(f"💾 Salvar e lembrar ({len(mudou)})", type="primary", disabled=mudou.empty):
             comp, pess = [], []
             for _, r in mudou.iterrows():
-                validas = subcategorias_de(r["Categoria"])
-                sub = r["Subcategoria"] if r["Subcategoria"] in validas else validas[-1]
-                linhas = saidas[saidas["chave"] == r["chave"]]
+                sub = subcategoria_valida(r["Categoria"], r["Subcategoria"])
+                linhas = saidas_forn[saidas_forn["chave"] == r["chave"]]
                 cnpj = next((c for c in map(extrair_cnpj, linhas["Descrição"]) if c), "")
                 regra = nova_regra(r["chave"], r["Fornecedor"], r["Categoria"], sub, "usuario", cnpj)
                 (comp if eh_empresa(linhas["Descrição"], linhas["Conta"]) else pess).append(regra)
@@ -777,71 +1129,8 @@ with corpo:
         st.caption("🔒 Empresas (cartão, boleto, débito ou CNPJ) vão para as regras compartilhadas. "
                    "Pix para pessoas fica só nas suas regras pessoais, para não expor nomes.")
 
-        # ---- Consulta de CNPJ
         st.subheader("Consultar CNPJ na Receita")
-        conhecidas = set(regras_todas["chave"])
-        pend = saidas[saidas["Categoria"].isin(["OUTRO", "TRANSFERÊNCIA"])
-                      & ~saidas["chave"].isin(conhecidas)].copy()
-        pend["CNPJ"] = pend["Descrição"].map(extrair_cnpj)
-        pend = (pend.dropna(subset=["CNPJ"]).groupby(["chave", "CNPJ"])
-                .agg(Fornecedor=("Fornecedor", "first"), Total=("Valor", lambda v: -v.sum()))
-                .sort_values("Total", ascending=False).reset_index())
-        if pend.empty:
-            st.caption("Nenhum fornecedor pendente com CNPJ no extrato.")
-        else:
-            dica(f"{len(pend)} fornecedor(es) sem categoria têm CNPJ na descrição (Pix para empresas). "
-                 "A consulta usa os dados públicos da Receita Federal (BrasilAPI, gratuita).")
-            if st.button(f"🔎 Consultar {len(pend)} CNPJ(s)"):
-                linhas = []
-                barra = st.progress(0.0, text="Consultando a Receita...")
-                for n, r in enumerate(pend.itertuples(), start=1):
-                    info = consultar_cnpj_cache(r.CNPJ)
-                    sugestao = categoria_do_cnae(info["cnae"]) if info else None
-                    linhas.append({
-                        "Aplicar": sugestao is not None, "chave": r.chave, "Fornecedor": r.Fornecedor,
-                        "CNPJ": r.CNPJ, "Nome na Receita": info["nome"] if info else "(não encontrado)",
-                        "Atividade principal (CNAE)": f"{info['cnae']} · {info['atividade']}" if info else "",
-                        "Categoria": sugestao[0] if sugestao else "OUTRO",
-                        "Subcategoria": (sugestao[1] or SEM_SUB) if sugestao else SEM_SUB,
-                        "cnae": info["cnae"] if info else "", "mei": bool(info and info["mei"]),
-                        "Total": formatar_reais(r.Total),
-                    })
-                    barra.progress(n / len(pend), text=f"Consultando a Receita... {n}/{len(pend)}")
-                barra.empty()
-                st.session_state["sugestoes_cnpj"] = pd.DataFrame(linhas)
-
-            sug = st.session_state.get("sugestoes_cnpj")
-            if sug is not None and not sug.empty:
-                dica("Confira as sugestões; ajuste a categoria se precisar e desmarque o que não quiser")
-                sug_edit = st.data_editor(
-                    sug, hide_index=True, width="stretch", key="editor_cnpj",
-                    column_order=["Aplicar", "Fornecedor", "Nome na Receita",
-                                  "Atividade principal (CNAE)", "Categoria", "Subcategoria", "Total"],
-                    disabled=["Fornecedor", "Nome na Receita", "Atividade principal (CNAE)", "Total"],
-                    column_config={
-                        "Categoria": st.column_config.SelectboxColumn(options=categorias_editaveis()),
-                        "Subcategoria": st.column_config.SelectboxColumn(options=todas_subs),
-                    })
-                marcadas = sug_edit[sug_edit["Aplicar"]]
-                if st.button(f"✅ Aplicar {len(marcadas)} sugestão(ões)", disabled=marcadas.empty):
-                    novas, pessoais_mei = [], []
-                    for _, r in marcadas.iterrows():
-                        validas = subcategorias_de(r["Categoria"])
-                        sub = r["Subcategoria"] if r["Subcategoria"] in validas else validas[-1]
-                        nome = r["Nome na Receita"] if not r["Nome na Receita"].startswith("(") \
-                            else r["Fornecedor"]
-                        regra = nova_regra(r["chave"], nome, r["Categoria"], sub, "cnpj",
-                                           r["CNPJ"], r["cnae"])
-                        # MEI tem o nome da pessoa no CNPJ: não vai para o arquivo público
-                        (pessoais_mei if r.get("mei") else novas).append(regra)
-                    try:
-                        salvar_regras(pd.concat(novas) if novas else regras_vazias(),
-                                      pd.concat(pessoais_mei) if pessoais_mei else regras_vazias(),
-                                      "CNPJ " + ", ".join(marcadas["Fornecedor"].head(5)))
-                        st.session_state.pop("sugestoes_cnpj", None)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Não foi possível salvar as regras: {e}")
+        secao_cnpj(lembrar=True)
 
         # ---- Regras salvas
         pessoais = st.session_state["regras_pessoais"]
@@ -860,8 +1149,9 @@ with corpo:
                            "Secrets do app (não aparecem aqui para ninguém).")
             st.dataframe(pessoais[colunas_ver], hide_index=True, width="stretch")
             if not pessoais.empty:
-                st.markdown("**Guardar de vez:** copie o texto abaixo e cole em Settings → Secrets "
-                            "do app no Streamlit Cloud" + (" (acrescente as linhas dentro do "
+                st.markdown("**Guardar de vez:** baixe o arquivo abaixo e recarregue na próxima "
+                            "vez. Se o app é seu, também pode colar o texto em Settings → Secrets "
+                            "do Streamlit Cloud" + (" (acrescente as linhas dentro do "
                             "REGRAS_PESSOAIS que já existe)" if not regras_privadas.empty else ""))
                 linhas_csv = pessoais.to_csv(index=False).strip()
                 if regras_privadas.empty:
