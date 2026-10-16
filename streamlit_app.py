@@ -8,6 +8,7 @@ import importlib
 import sys
 
 import altair as alt
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -306,21 +307,63 @@ def grafico_entradas_mes(mensal):
 CORES_SERIES = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9",
                 "#e66767"]
 COR_TOTAL = "#8c8c8c"
-MAX_SERIES = 7   # da 8ª em diante, juntas em "Outros"
+ALTURA_LINHAS = 380
+LARGURA_NOMES = 190    # espaço à direita para o nome no fim de cada linha
+DISTANCIA_NOMES = 15   # px mínimos entre dois nomes, para não se sobreporem
 
 
-def grafico_linhas(longo, nome_total="Total"):
-    """Uma linha por despesa (Mês, Fornecedor, Valor) e uma linha com o total do mês.
+def cor_do_texto():
+    """Cor do texto do tema aberto (os nomes no gráfico seguem o texto, não a série)."""
+    try:
+        escuro = st.context.theme.type == "dark"
+    except Exception:
+        escuro = False
+    return "#f2ece0" if escuro else "#14213d"
 
-    Passando o mouse, uma linha vertical mostra os valores de todas as despesas do mês.
+
+def _topo_do_eixo(maximo):
+    """Topo "redondo" do eixo y (1, 2, 2,5 ou 5 × 10ⁿ), para saber onde cai cada valor."""
+    if maximo <= 0:
+        return 1.0
+    passo = 10 ** np.floor(np.log10(maximo / 5))
+    for m in (1, 2, 2.5, 5, 10):
+        if maximo / (passo * m) <= 5:
+            return float(np.ceil(maximo * 1.04 / (passo * m)) * passo * m)
+    return float(maximo)
+
+
+def _posicoes_dos_nomes(valores, topo):
+    """Afasta os nomes que terminam no mesmo mês e ficariam um em cima do outro.
+
+    Recebe os valores finais e devolve o valor (na escala do eixo) onde cada nome vai.
+    """
+    px = {k: ALTURA_LINHAS * (1 - v / topo) for k, v in valores.items()}
+    ordem = sorted(px, key=px.get)
+    for a, b in zip(ordem, ordem[1:]):
+        px[b] = max(px[b], px[a] + DISTANCIA_NOMES)
+    excesso = px[ordem[-1]] - (ALTURA_LINHAS + 6) if ordem else 0
+    if excesso > 0:   # passou do eixo: sobe todos e volta a afastar de baixo para cima
+        px[ordem[-1]] -= excesso
+        for a, b in zip(reversed(ordem), list(reversed(ordem))[1:]):
+            px[b] = min(px[b], px[a] - DISTANCIA_NOMES)
+    return {k: topo * (1 - y / ALTURA_LINHAS) for k, y in px.items()}
+
+
+def grafico_linhas(longo, nome_total="Total", max_series=7, rotulo="Despesa"):
+    """Uma linha por série (Mês, Fornecedor, Valor) e uma linha tracejada com o total.
+
+    As max_series maiores ganham linha própria; as demais se juntam em "Outros". O nome
+    de cada série fica no fim da linha. Passando o mouse, uma linha vertical mostra os
+    valores de todas as séries do mês.
     """
     ordem = longo.groupby("Fornecedor")["Valor"].sum().sort_values(ascending=False).index
-    if len(ordem) > MAX_SERIES + 1:
-        resto = set(ordem[MAX_SERIES:])
+    if len(ordem) > max_series:
+        resto = set(ordem[max_series:])
+        nome_outros = f"Outros ({len(resto)})"
         longo = longo.assign(Fornecedor=longo["Fornecedor"].where(
-            ~longo["Fornecedor"].isin(resto), f"Outros ({len(resto)})"))
+            ~longo["Fornecedor"].isin(resto), nome_outros))
         longo = longo.groupby(["Mês", "Fornecedor"], as_index=False)["Valor"].sum()
-        ordem = list(ordem[:MAX_SERIES]) + [f"Outros ({len(resto)})"]
+        ordem = list(ordem[:max_series]) + [nome_outros]
     series = list(ordem)
     meses = sorted(longo["Mês"].unique())
     total = longo.groupby("Mês", as_index=False)["Valor"].sum().assign(Fornecedor=nome_total)
@@ -328,30 +371,44 @@ def grafico_linhas(longo, nome_total="Total"):
     dados["Rótulo"] = dados["Mês"].map(rotulo_mes)
     dados["Texto"] = dados["Valor"].map(formatar_reais)
     rotulos = [rotulo_mes(m) for m in meses]
-
-    # Tabela larga para a dica da linha vertical: um campo por despesa (c0, c1...)
-    largo = dados.pivot_table(index="Rótulo", columns="Fornecedor", values="Valor",
-                              aggfunc="sum")
     nomes = [nome_total] + series
-    largo = largo.reindex(columns=nomes)
+    topo = _topo_do_eixo(dados["Valor"].max())
+
+    # Nome no fim de cada linha (no último mês em que a série aparece)
+    fins = dados.sort_values("Mês").groupby("Fornecedor").tail(1)
+    nomes_fim = []
+    for rot, grupo in fins.groupby("Rótulo"):
+        pos = _posicoes_dos_nomes(dict(zip(grupo["Fornecedor"], grupo["Valor"])), topo)
+        nomes_fim += [{"Rótulo": rot, "Fornecedor": f, "Valor": v} for f, v in pos.items()]
+    nomes_fim = pd.DataFrame(nomes_fim)
+
+    # Tabela larga para a dica da linha vertical: um campo por série (c0, c1...)
+    largo = dados.pivot_table(index="Rótulo", columns="Fornecedor", values="Valor",
+                              aggfunc="sum").reindex(columns=nomes)
     campos = {n: f"c{i}" for i, n in enumerate(nomes)}
     largo = largo.map(lambda v: "—" if pd.isna(v) else formatar_reais(v)) \
         .rename(columns=campos).reset_index()
 
-    x = alt.X("Rótulo:N", sort=rotulos, title=None, axis=alt.Axis(labelAngle=0))
-    cor = alt.Color("Fornecedor:N", sort=nomes,
-                    scale=alt.Scale(domain=nomes, range=[COR_TOTAL] + CORES_SERIES[:len(series)]),
-                    legend=alt.Legend(title=None, orient="top", columns=3, labelLimit=260,
-                                      symbolType="stroke", symbolStrokeWidth=3))
+    x = alt.X("Rótulo:N", sort=rotulos, title=None,
+              axis=alt.Axis(labelAngle=0, labelOverlap=True))
+    y = alt.Y("Valor:Q", axis=EIXO_REAIS, scale=alt.Scale(domain=[0, topo], nice=False))
+    cor = alt.Color("Fornecedor:N", sort=nomes, legend=None,
+                    scale=alt.Scale(domain=nomes, range=[COR_TOTAL] + CORES_SERIES[:len(series)]))
     tracejado = alt.condition(alt.datum.Fornecedor == nome_total, alt.value([6, 4]),
                               alt.value([1, 0]))
     espessura = alt.condition(alt.datum.Fornecedor == nome_total, alt.value(3), alt.value(2))
-    base = alt.Chart(dados).encode(x=x, y=alt.Y("Valor:Q", axis=EIXO_REAIS), color=cor)
-    linhas = base.mark_line().encode(strokeDash=tracejado,
-                                                          strokeWidth=espessura)
+    base = alt.Chart(dados).encode(x=x, y=y, color=cor)
+    linhas = base.mark_line().encode(strokeDash=tracejado, strokeWidth=espessura)
     pontos = base.mark_point(filled=True, size=64, opacity=1).encode(
-        tooltip=[alt.Tooltip("Fornecedor:N", title="Despesa"),
+        tooltip=[alt.Tooltip("Fornecedor:N", title=rotulo),
                  alt.Tooltip("Rótulo:N", title="Mês"), alt.Tooltip("Texto:N", title="Valor")])
+    estilo = dict(align="left", baseline="middle", dx=9, fontSize=12,
+                  limit=LARGURA_NOMES - 14, color=cor_do_texto())
+    eh_total = nomes_fim["Fornecedor"] == nome_total
+    textos = (alt.Chart(nomes_fim[~eh_total]).mark_text(**estilo)
+              .encode(x=x, y=y, text="Fornecedor:N")
+              + alt.Chart(nomes_fim[eh_total]).mark_text(fontWeight="bold", **estilo)
+              .encode(x=x, y=y, text="Fornecedor:N"))
     passa = alt.selection_point(nearest=True, on="pointerover", fields=["Rótulo"], empty=False,
                                 clear="pointerout")
     regua = alt.Chart(largo).mark_rule(color=COR_TOTAL, strokeWidth=1).encode(
@@ -360,7 +417,9 @@ def grafico_linhas(longo, nome_total="Total"):
         tooltip=[alt.Tooltip("Rótulo:N", title="Mês")]
         + [alt.Tooltip(f"{campos[n]}:N", title=n) for n in nomes],
     ).add_params(passa)
-    return (linhas + pontos + regua).properties(height=380)
+    return (linhas + pontos + textos + regua).properties(
+        height=ALTURA_LINHAS, padding={"left": 5, "top": 10, "bottom": 5,
+                                       "right": LARGURA_NOMES})
 
 
 def tabela_em_reais(df, colunas_reais, colunas_pct=()):
@@ -758,6 +817,24 @@ with corpo:
             else:
                 st.markdown(ranking_html(cats, "Saída"), unsafe_allow_html=True)
         dica("Os detalhes, com as fontes e os fornecedores, estão nas abas 💰 Entradas e 💸 Saídas")
+
+        # Evolução mês a mês: as 5 maiores séries, o resto em "Outros", e o total
+        if df["Mês"].nunique() > 1:
+            if not tipos_entrada.empty:
+                st.subheader("De onde vem, mês a mês")
+                dica("Passe o mouse sobre o gráfico para ver os valores de cada mês")
+                ent_mes = (df_entradas.groupby(["Mês", "Categoria"], as_index=False)["Valor"]
+                           .sum().rename(columns={"Categoria": "Fornecedor"}))
+                st.altair_chart(grafico_linhas(ent_mes, "Total de entradas", max_series=5,
+                                               rotulo="Tipo"), width="stretch")
+            if not cats.empty:
+                st.subheader("Para onde vai, mês a mês")
+                dica("Passe o mouse sobre o gráfico para ver os valores de cada mês")
+                sai_mes = (df[df["Tipo"] == "Saída"].assign(Valor=lambda d: -d["Valor"])
+                           .groupby(["Mês", "Categoria"], as_index=False)["Valor"].sum()
+                           .rename(columns={"Categoria": "Fornecedor"}))
+                st.altair_chart(grafico_linhas(sai_mes, "Total de saídas", max_series=5,
+                                               rotulo="Categoria"), width="stretch")
 
         if not internas.empty:
             st.subheader("Movimentações internas")

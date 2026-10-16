@@ -106,6 +106,7 @@ def test_gastos_recorrentes():
     for m in range(1, 6):
         linhas.append(_gasto(f"2026-0{m}-10", "Streaming", 39.90, "ASSINATURAS"))
         linhas.append(_gasto(f"2026-0{m}-05", "Luz Exemplo", 100 + 40 * m, "CASA"))
+        linhas.append(_gasto(f"2026-0{m}-18", "Lanchonete", 30 + 20 * m, "ALIMENTAÇÃO"))
         for d in (3, 12, 20):
             linhas.append(_gasto(f"2026-0{m}-{d:02d}", "Padaria", 10 + d, "ALIMENTAÇÃO"))
     for m in range(1, 4):   # parou em março
@@ -119,6 +120,7 @@ def test_gastos_recorrentes():
     assert r.loc["Streaming", "Próxima prevista"] == "10/06/2026"
     assert r.loc["Luz Exemplo", "Tipo"] == plus.CONTA_MENSAL
     assert r.loc["Padaria", "Tipo"] == plus.FREQUENTE
+    assert r.loc["Lanchonete", "Tipo"] == plus.FREQUENTE   # uma vez por mês, mas não é conta
     assert r.loc["Padaria", "Próxima prevista"] == ""
     assert r.loc["Academia", "Situação"] == "Parou (03/2026)"
     assert r.loc["Academia", "Próxima prevista"] == ""
