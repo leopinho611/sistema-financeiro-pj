@@ -491,7 +491,8 @@ def test_consultar_cnpj_formata_resposta(monkeypatch):
 
     monkeypatch.setattr(regras.urllib.request, "urlopen", lambda req, timeout: Resposta())
     assert regras.consultar_cnpj("12345678000190") == {
-        "nome": "PADARIA X", "cnae": "4721102", "atividade": "Padaria e confeitaria"}
+        "nome": "PADARIA X", "cnae": "4721102", "atividade": "Padaria e confeitaria",
+        "mei": False}
 
     def falha(req, timeout):
         raise OSError("sem rede")
@@ -631,3 +632,42 @@ def test_regra_unifica_nome_do_fornecedor():
 def test_subcategoria_feira():
     from financeiro import subcategorizar
     assert subcategorizar("ALIMENTAÇÃO", "FEIRA DO BAIRRO") == "Feira"
+
+
+# ----------------------------------------------------------------------------
+# Arquivos compactados e MEI
+# ----------------------------------------------------------------------------
+def _zip(arquivos):
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for nome, dados in arquivos:
+            z.writestr(nome, dados)
+    return buf.getvalue()
+
+
+def test_expandir_zip_ignora_pastas_e_lixo_do_mac():
+    from financeiro import expandir_zip
+    dados = _zip([("Extratos/Nubank/NU_jan.csv", b"Data,Valor\n"),
+                  ("Extratos/BB/fatura.pdf", b"%PDF-1.4"),
+                  ("__MACOSX/Extratos/._NU_jan.csv", b"lixo"),
+                  ("Extratos/.DS_Store", b"lixo")])
+    assert [n for n, _ in expandir_zip(dados)] == ["NU_jan.csv", "fatura.pdf"]
+
+
+def test_expandir_zip_recusa_zip_bomba_e_corrompido(monkeypatch):
+    import financeiro
+    monkeypatch.setattr(financeiro, "LIMITE_ZIP_BYTES", 100)
+    with pytest.raises(ValueError, match="100 MB"):
+        financeiro.expandir_zip(_zip([("grande.csv", b"x" * 1000)]))
+    with pytest.raises(ValueError, match="corrompido"):
+        financeiro.expandir_zip(b"isto nao e um zip")
+
+
+def test_mei_nao_vai_para_regras_compartilhadas():
+    from financeiro import eh_empresa, eh_mei
+    pix_mei = ("Transferência enviada pelo Pix - 12.345.678 MARIA DA SILVA - "
+               "12.345.678/0001-90 - BANCO X")
+    assert eh_mei(pix_mei)
+    assert not eh_empresa([pix_mei], ["Nubank"])
+    assert not eh_mei("Transferência enviada pelo Pix - PADARIA X - 12.345.678/0001-90")

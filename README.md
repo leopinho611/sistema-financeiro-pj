@@ -92,9 +92,15 @@ Gráficos por categoria
 Dados detalhados
 Exportar dados categorizados
 🔒 Privacidade
-Seus dados não são salvos no servidor
-Tudo é processado no seu navegador
-Nenhum terceiro tem acesso aos seus extratos
+- **Extratos:** são enviados ao servidor do app (Streamlit Community Cloud) e processados
+  **só na memória**, enquanto a página está aberta. O app não grava os extratos em disco nem
+  em banco de dados; ao fechar a página (ou depois de um tempo sem uso), tudo é descartado.
+- **O que fica guardado são só as regras de categoria** (nome do fornecedor → categoria),
+  sem valores nem datas:
+  - empresas: em `regras/regras_fornecedores.csv`, neste repositório (público);
+  - pessoas (Pix, MEI): só no segredo `REGRAS_PESSOAIS`, que apenas o dono do app vê.
+- **Consulta de CNPJ:** quando você clica no botão, só o CNPJ é enviado à BrasilAPI.
+- O app não usa inteligência artificial nem envia extratos a terceiros.
 🎯 Roadmap (Próximas Semanas)
 [ ] Integração com Google Drive API (importar extratos automaticamente)
 [ ] SQLite para histórico de transações

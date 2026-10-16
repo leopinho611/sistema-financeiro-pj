@@ -8,6 +8,8 @@ import io
 import re
 import unicodedata
 import warnings
+import zipfile
+from pathlib import PurePosixPath
 
 import pandas as pd
 from pypdf import PdfReader
@@ -632,11 +634,22 @@ def aplicar_regras(t, regras):
     return t
 
 
+_PADRAO_MEI = re.compile(r"(?:^|[-\s])\d{2}\.\d{3}\.\d{3}\s+[A-Za-zÀ-ú]")
+
+
+def eh_mei(texto):
+    """MEI tem o nome da pessoa no CNPJ ("49.463.039 MARIA DA SILVA")."""
+    return bool(_PADRAO_MEI.search(str(texto)))
+
+
 def eh_empresa(descricoes, contas):
     """O fornecedor é empresa? (compra no cartão, boleto/débito ou CNPJ na descrição).
 
-    Pix para pessoas não entra nas regras compartilhadas, para não expor nomes.
+    Pix para pessoas (inclusive MEI, que tem o nome da pessoa no CNPJ) não entra nas
+    regras compartilhadas, para não expor nomes.
     """
+    if any(eh_mei(d) for d in descricoes):
+        return False
     for d, c in zip(descricoes, contas):
         n = normalizar(d)
         if "Cartão" in str(c) or extrair_cnpj(d) or n.startswith(("pagamento de boleto", "pagto",
@@ -985,6 +998,33 @@ def identificar_conta(nome, colunas=()):
         return "BB Conta"
     base = re.sub(r"\.[a-z]+$", "", nome)
     return re.sub(r"[\d_\-\s]+$", "", base).strip() or base
+
+
+LIMITE_ZIP_ARQUIVOS = 300
+LIMITE_ZIP_BYTES = 100 * 1024 * 1024   # 100 MB descompactados
+
+
+def expandir_zip(conteudo):
+    """Arquivos de dentro de um .zip, como [(nome, bytes)]. Tudo em memória.
+
+    Ignora pastas, arquivos ocultos e o lixo do macOS (__MACOSX). Recusa zip com
+    senha e zip que descompactado passaria dos limites (proteção contra "zip-bomba").
+    """
+    try:
+        z = zipfile.ZipFile(io.BytesIO(conteudo))
+    except zipfile.BadZipFile:
+        raise ValueError("o arquivo .zip está corrompido.")
+    with z:
+        membros = [m for m in z.infolist()
+                   if not m.is_dir() and not m.filename.startswith("__MACOSX/")
+                   and not PurePosixPath(m.filename).name.startswith(".")]
+        if len(membros) > LIMITE_ZIP_ARQUIVOS:
+            raise ValueError(f"o .zip tem mais de {LIMITE_ZIP_ARQUIVOS} arquivos.")
+        if sum(m.file_size for m in membros) > LIMITE_ZIP_BYTES:
+            raise ValueError("o .zip descompactado passa de 100 MB.")
+        if any(m.flag_bits & 0x1 for m in membros):
+            raise ValueError("o .zip está protegido por senha.")
+        return [(PurePosixPath(m.filename).name, z.read(m)) for m in membros]
 
 
 def carregar_arquivo(nome, conteudo):

@@ -14,6 +14,7 @@ Regras pessoais (Pix para pessoas) nunca vão para o arquivo compartilhado.
 import base64
 import io
 import json
+import re
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -131,7 +132,8 @@ class RepositorioRegras:
 def consultar_cnpj(cnpj):
     """Dados públicos do CNPJ na Receita Federal (via BrasilAPI), ou None.
 
-    Retorna {"nome": nome fantasia ou razão social, "cnae": código, "atividade": descrição}.
+    Retorna {"nome": nome fantasia ou razão social, "cnae": código, "atividade": descrição,
+    "mei": se é microempreendedor individual}.
     """
     req = urllib.request.Request(URL_BRASILAPI.format(cnpj=cnpj),
                                  headers={"User-Agent": "sistema-financeiro-pj"})
@@ -140,8 +142,12 @@ def consultar_cnpj(cnpj):
             dados = json.loads(resp.read().decode())
     except Exception:
         return None
+    razao = (dados.get("razao_social") or "").strip()
     return {
-        "nome": (dados.get("nome_fantasia") or dados.get("razao_social") or "").strip(),
+        # MEI tem o nome da pessoa na razão social: a regra fica só nas pessoais
+        "mei": bool(dados.get("opcao_pelo_mei"))
+        or bool(re.match(r"^\d{2}\.\d{3}\.\d{3}\s", razao)),
+        "nome": (dados.get("nome_fantasia") or razao).strip(),
         "cnae": str(dados.get("cnae_fiscal") or ""),
         "atividade": (dados.get("cnae_fiscal_descricao") or "").strip(),
     }

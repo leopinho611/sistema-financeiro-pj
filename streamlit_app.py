@@ -26,6 +26,7 @@ from financeiro import (
     consolidar,
     detectar_colunas,
     eh_empresa,
+    expandir_zip,
     extrair_cnpj,
     formatar_reais,
     montar_transacoes,
@@ -316,12 +317,15 @@ with st.sidebar:
     st.header("📁 Importar Dados")
     arquivos = st.file_uploader(
         "Escolha seus extratos",
-        type=["csv", "xlsx", "xls", "excel", "pdf", "ofx"],
+        type=["csv", "xlsx", "xls", "excel", "pdf", "ofx", "zip"],
         accept_multiple_files=True,
         help="Extratos em CSV, Excel ou OFX de qualquer banco, de vários meses e contas. "
              "Em PDF: extrato da conta Nubank e fatura do cartão BB. Pode mandar o mesmo "
-             "mês em mais de um formato: as repetições são descartadas."
+             "mês em mais de um formato: as repetições são descartadas. Pode mandar "
+             "uma pasta compactada (.zip)."
     )
+    st.caption("🔒 Seus extratos ficam só na memória enquanto esta página está aberta: "
+               "não são gravados e somem ao fechar.")
     st.caption("🌓 Tema claro ou escuro: menu ⋮ no canto superior direito → Settings")
     nome_titular = st.text_input(
         "Seu nome (opcional)",
@@ -355,7 +359,30 @@ layouts = {}   # extratos com as mesmas colunas compartilham a identificação
 # CSV/Excel primeiro, depois OFX e PDF: quando o mesmo mês vem em mais de um formato,
 # fica a versão do primeiro (o CSV tem a descrição mais completa)
 ORDEM_FORMATO = {"csv": 0, "xlsx": 0, "xls": 0, "excel": 0, "ofx": 1, "pdf": 2}
-arquivos = sorted(arquivos, key=lambda a: ORDEM_FORMATO.get(a.name.lower().rsplit(".", 1)[-1], 3))
+class ArquivoEmMemoria:
+    """Arquivo tirado de um .zip, com a mesma interface do arquivo enviado."""
+
+    def __init__(self, name, dados):
+        self.name, self._dados = name, dados
+
+    def getvalue(self):
+        return self._dados
+
+
+expandidos = []
+for arquivo in arquivos:
+    if arquivo.name.lower().endswith(".zip"):
+        try:
+            internos = expandir_zip(arquivo.getvalue())
+            expandidos += [ArquivoEmMemoria(f"{n}", d) for n, d in internos]
+            leitura.append({"Arquivo": arquivo.name, "Conta": "—",
+                            "Situação": f"📦 {len(internos)} arquivo(s) dentro"})
+        except ValueError as e:
+            leitura.append({"Arquivo": arquivo.name, "Conta": "—", "Situação": f"⚠️ ignorado: {e}"})
+    else:
+        expandidos.append(arquivo)
+arquivos = sorted(expandidos,
+                  key=lambda a: ORDEM_FORMATO.get(a.name.lower().rsplit(".", 1)[-1], 3))
 for arquivo in arquivos:
     try:
         r = carregar_arquivo(arquivo.name, arquivo.getvalue())
@@ -646,7 +673,8 @@ with tab5:
                     "Atividade principal (CNAE)": f"{info['cnae']} · {info['atividade']}" if info else "",
                     "Categoria": sugestao[0] if sugestao else "OUTRO",
                     "Subcategoria": (sugestao[1] or SEM_SUB) if sugestao else SEM_SUB,
-                    "cnae": info["cnae"] if info else "", "Total": formatar_reais(r.Total),
+                    "cnae": info["cnae"] if info else "", "mei": bool(info and info["mei"]),
+                    "Total": formatar_reais(r.Total),
                 })
                 barra.progress(n / len(pend), text=f"Consultando a Receita... {n}/{len(pend)}")
             barra.empty()
@@ -666,16 +694,19 @@ with tab5:
                 })
             marcadas = sug_edit[sug_edit["Aplicar"]]
             if st.button(f"✅ Aplicar {len(marcadas)} sugestão(ões)", disabled=marcadas.empty):
-                novas = []
+                novas, pessoais_mei = [], []
                 for _, r in marcadas.iterrows():
                     validas = subcategorias_de(r["Categoria"])
                     sub = r["Subcategoria"] if r["Subcategoria"] in validas else validas[-1]
                     nome = r["Nome na Receita"] if not r["Nome na Receita"].startswith("(") \
                         else r["Fornecedor"]
-                    novas.append(nova_regra(r["chave"], nome, r["Categoria"], sub, "cnpj",
-                                            r["CNPJ"], r["cnae"]))
+                    regra = nova_regra(r["chave"], nome, r["Categoria"], sub, "cnpj",
+                                       r["CNPJ"], r["cnae"])
+                    # MEI tem o nome da pessoa no CNPJ: não vai para o arquivo público
+                    (pessoais_mei if r.get("mei") else novas).append(regra)
                 try:
-                    salvar_regras(pd.concat(novas), regras_vazias(),
+                    salvar_regras(pd.concat(novas) if novas else regras_vazias(),
+                                  pd.concat(pessoais_mei) if pessoais_mei else regras_vazias(),
                                   "CNPJ " + ", ".join(marcadas["Fornecedor"].head(5)))
                     st.session_state.pop("sugestoes_cnpj", None)
                     st.rerun()
