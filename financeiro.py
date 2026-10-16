@@ -381,14 +381,21 @@ def montar_transacoes(df, colunas, conta=""):
     return t.sort_values("Data").reset_index(drop=True)
 
 
-def resumo_categorias(t):
-    """Total de saídas por categoria (valores positivos), do maior para o menor."""
-    saidas = t[t["Tipo"] == "Saída"]
+def coluna_pct(tipo):
+    return "% das saídas" if tipo == "Saída" else "% das entradas"
+
+
+def resumo_categorias(t, tipo="Saída"):
+    """Total por categoria (valores positivos), do maior para o menor.
+
+    tipo="Saída" (padrão) ou "Entrada".
+    """
+    saidas = t[t["Tipo"] == tipo]
     tabela = (saidas.groupby("Categoria")["Valor"].agg(["sum", "count"])
               .rename(columns={"sum": "Total", "count": "Transações"}))
-    tabela["Total"] = -tabela["Total"]
+    tabela["Total"] = tabela["Total"].abs()
     total = tabela["Total"].sum()
-    tabela["% das saídas"] = (tabela["Total"] / total * 100) if total else 0
+    tabela[coluna_pct(tipo)] = (tabela["Total"] / total * 100) if total else 0
     return tabela.sort_values("Total", ascending=False).reset_index()
 
 
@@ -478,14 +485,45 @@ SUBCATEGORIAS = {
     },
 }
 SUBCATEGORIA_OUTROS = "Outros"
+# Tipos de entrada reconhecidos pelas palavras; o resto é separado por quem pagou
+TIPOS_ENTRADA = {
+    "Salário": ["salario", "folha", "proventos", "pro labore", "prolabore", "vencimentos"],
+    "Rendimentos": ["rendimento*", "dividendo*", "juros sobre capital", "jcp", "cupom"],
+    "Estornos e reembolsos": ["estorno*", "reembolso*", "devolucao", "cashback"],
+}
+_PADROES_ENTRADA = {}
+_CPF_ABERTO = re.compile(r"(?<![\d/.])\d{11}(?![\d/])")
 # Seções da fatura do BB que já dizem a subcategoria
 SECOES_FATURA_SUB = {"supermercados": "Supermercado", "restaurantes": "Restaurante"}
 
 _PADROES_SUB = {cat: {sub: None for sub in subs} for cat, subs in SUBCATEGORIAS.items()}
 
 
+def tipo_de_entrada(descricao):
+    """Tipo de uma entrada: salário, rendimentos, estornos ou quem pagou (empresa/pessoa)."""
+    if not _PADROES_ENTRADA:
+        _PADROES_ENTRADA.update({k: _padrao(v) for k, v in TIPOS_ENTRADA.items()})
+    texto = normalizar(sem_dados_bancarios(descricao))
+    for tipo, padrao in _PADROES_ENTRADA.items():
+        if padrao.search(texto):
+            return tipo
+    bruto = str(descricao)
+    if eh_mei(bruto) or "•••" in bruto or _CPF_ABERTO.search(bruto):
+        return "Recebido de pessoas"
+    if _PADRAO_CNPJ.search(bruto):
+        return "Recebido de empresas"
+    return "Outras entradas"
+
+
 def subcategorizar(categoria, descricao, fornecedor="", secao=""):
-    """Subcategoria de uma saída, ou "" quando a categoria não tem subcategorias."""
+    """Subcategoria de uma saída, ou "" quando a categoria não tem subcategorias.
+
+    Para entradas (RECEITA), devolve o tipo da entrada (ver tipo_de_entrada).
+    """
+    if categoria == CATEGORIA_ENTRADA:
+        return tipo_de_entrada(descricao)
+    if categoria == CATEGORIA_ESTORNO:
+        return "Estornos e reembolsos"
     regras = SUBCATEGORIAS.get(categoria)
     if not regras:
         return ""
@@ -730,24 +768,27 @@ def _apresentar(nome):
     return " ".join(p if "/" in p else p.capitalize() for p in nome.split())
 
 
-def resumo_subcategorias(t, categoria):
-    """Total de saídas por subcategoria dentro de uma categoria ("Outros" por último)."""
-    saidas = t[(t["Tipo"] == "Saída") & (t["Categoria"] == categoria)]
+def resumo_subcategorias(t, categoria, tipo="Saída"):
+    """Total por subcategoria dentro de uma categoria ("Outros" por último)."""
+    saidas = t[(t["Tipo"] == tipo) & (t["Categoria"] == categoria)]
     if saidas.empty or "Subcategoria" not in saidas or saidas["Subcategoria"].eq("").all():
         return pd.DataFrame(columns=["Subcategoria", "Total", "Transações", "% da categoria"])
     tabela = (saidas.groupby("Subcategoria")["Valor"].agg(["sum", "count"])
               .rename(columns={"sum": "Total", "count": "Transações"}))
-    tabela["Total"] = -tabela["Total"]
+    tabela["Total"] = tabela["Total"].abs()
     tabela["% da categoria"] = tabela["Total"] / tabela["Total"].sum() * 100
     tabela["_outros"] = tabela.index == SUBCATEGORIA_OUTROS
     tabela = tabela.sort_values(["_outros", "Total"], ascending=[True, False])
     return tabela.drop(columns="_outros").reset_index()
 
 
-def resumo_fornecedores(t, categoria, n=10, subcategoria=None):
+def resumo_fornecedores(t, categoria, n=10, subcategoria=None, tipo="Saída"):
     """Os n fornecedores que mais receberam numa categoria (ou subcategoria); o resto
-    em "Outros fornecedores". O % é sobre o total do grupo detalhado."""
-    filtro = (t["Tipo"] == "Saída") & (t["Categoria"] == categoria)
+    em "Outros fornecedores". O % é sobre o total do grupo detalhado.
+
+    Com tipo="Entrada", são as fontes (quem pagou) em vez dos fornecedores.
+    """
+    filtro = (t["Tipo"] == tipo) & (t["Categoria"] == categoria)
     if subcategoria is not None:
         filtro &= t["Subcategoria"] == subcategoria
     saidas = t[filtro].copy()
@@ -766,12 +807,13 @@ def resumo_fornecedores(t, categoria, n=10, subcategoria=None):
     nome = saidas.groupby("_chave")["Fornecedor"].agg(lambda s: max(s.unique(), key=len))
     tabela = (saidas.groupby("_chave")["Valor"].agg(["sum", "count"])
               .rename(columns={"sum": "Total", "count": "Transações"}))
-    tabela["Total"] = -tabela["Total"]
+    tabela["Total"] = tabela["Total"].abs()
     tabela["Fornecedor"] = nome
     tabela = tabela.sort_values("Total", ascending=False)
     if len(tabela) > n:
         resto = tabela.iloc[n:]
-        outros = pd.DataFrame([{"Fornecedor": f"Outros fornecedores ({len(resto)})",
+        rotulo = "Outros fornecedores" if tipo == "Saída" else "Outras fontes"
+        outros = pd.DataFrame([{"Fornecedor": f"{rotulo} ({len(resto)})",
                                 "Total": resto["Total"].sum(),
                                 "Transações": resto["Transações"].sum()}])
         tabela = pd.concat([tabela.iloc[:n], outros])

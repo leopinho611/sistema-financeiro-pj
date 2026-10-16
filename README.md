@@ -8,7 +8,9 @@ Um aplicativo web que automatiza a categorização de extratos bancários e gera
 ✅ Movimentações internas - Aplicação/resgate automático (BB Rende Fácil, caixinhas Nubank), transferência entre suas contas e pagamento de fatura não contam como entrada nem saída  
 ✅ Identificação automática das colunas - Data, descrição, valor ou crédito/débito (ajustável na tela)  
 ✅ Categorização Automática - 11 categorias de saída + RECEITA para entradas  
-✅ Resumo em R$ - Entradas, saídas, saldo e gastos por categoria  
+✅ Resumo em R$ - Entradas, saídas e saldo; "de onde vem" e "para onde vai" lado a lado  
+✅ Entradas - Por mês e por tipo (recebido de empresas, de pessoas, salário, rendimentos, estornos), com as fontes que mais pagaram  
+✅ Saídas - Por categoria, subcategoria e fornecedor  
 ✅ Subcategorias e fornecedores - Clique numa categoria para abrir, na própria linha, as subcategorias e os 10 maiores fornecedores de cada uma (o resto em "Outros fornecedores")  
 ✅ Mês a Mês - Entradas × saídas e categorias por mês  
 ✅ Tema claro ou escuro - Azul-marinho, dourado e branco-osso; troque em ⋮ → Settings (por padrão segue o aparelho)  
