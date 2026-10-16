@@ -200,3 +200,22 @@ def test_indicadores_sem_dados_opcionais():
     nomes = [i["nome"] for i in plus.indicadores(t)]
     assert "Reserva de emergência" not in nomes and "Compromissos mensais" not in nomes
     assert plus.indicadores(t)[0]["status"] == plus.BOM   # sobra 50%
+
+
+def test_dados_dos_graficos_de_linha():
+    linhas = []
+    for m in range(1, 5):
+        linhas.append(_gasto(f"2026-0{m}-10", "Streaming", 39.90, "ASSINATURAS"))
+        linhas.append(_gasto(f"2026-0{m}-05", "Luz Exemplo", 100 + 40 * m, "CASA"))
+        for d in (3, 12, 20):
+            linhas.append(_gasto(f"2026-0{m}-{d:02d}", "Padaria", 10.0, "ALIMENTAÇÃO"))
+    t = _t(linhas)
+    h = plus.historico_recorrentes(t, plus.gastos_recorrentes(t))
+    assert set(h["Fornecedor"]) == {"Streaming", "Luz Exemplo"}   # frequente fica de fora
+    assert h[h["Fornecedor"] == "Luz Exemplo"]["Valor"].tolist() == [140, 180, 220, 260]
+
+    parcelas = pd.DataFrame([{"Fornecedor": "Loja", "Valor da parcela": 50.0, "Restam": 3,
+                              "Última parcela": "2026-12"}])
+    c = plus.cronograma_por_compra(parcelas)
+    assert c["Mês"].tolist() == ["2026-10", "2026-11", "2026-12"]
+    assert c["Valor"].tolist() == [50.0] * 3

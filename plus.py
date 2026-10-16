@@ -144,6 +144,37 @@ def gastos_recorrentes(t, min_meses=3, variacao_fixo=0.15, frequencia_minima=0.5
             .drop(columns=["_o1", "_o2"]).reset_index(drop=True))
 
 
+def historico_recorrentes(t, recorrentes, tipos=(FIXO, CONTA_MENSAL)):
+    """Quanto cada recorrente dos tipos escolhidos custou em cada mês (para o gráfico).
+
+    Retorna Mês (AAAA-MM), Fornecedor, Valor; meses sem pagamento ficam de fora.
+    """
+    escolhidos = recorrentes[recorrentes["Tipo"].isin(tipos)]
+    if escolhidos.empty:
+        return pd.DataFrame(columns=["Mês", "Fornecedor", "Valor"])
+    nomes = {chave_fornecedor(f): f for f in escolhidos["Fornecedor"]}
+    s = t[t["Tipo"] == "Saída"].copy()
+    if "Parcela" in s:
+        s = s[s["Parcela"].isna()]
+    s["_k"] = s["Fornecedor"].map(chave_fornecedor)
+    s = s[s["_k"].isin(nomes)]
+    h = s.groupby(["Mês", "_k"])["Valor"].sum().abs().reset_index()
+    h["Fornecedor"] = h["_k"].map(nomes)
+    return h[["Mês", "Fornecedor", "Valor"]].sort_values(["Fornecedor", "Mês"]) \
+        .reset_index(drop=True)
+
+
+def cronograma_por_compra(parcelas):
+    """Valor de cada compra parcelada em cada mês que ainda falta (para o gráfico)."""
+    linhas = []
+    for _, p in parcelas.iterrows():
+        ultima = pd.Period(p["Última parcela"], freq="M")
+        for i in range(int(p["Restam"]) - 1, -1, -1):
+            linhas.append({"Mês": str(ultima - i), "Fornecedor": p["Fornecedor"],
+                           "Valor": p["Valor da parcela"]})
+    return pd.DataFrame(linhas, columns=["Mês", "Fornecedor", "Valor"])
+
+
 def compromissos_mensais(recorrentes):
     """Soma por mês do que é fixo ou conta mensal e ainda está ativo."""
     if recorrentes.empty:
