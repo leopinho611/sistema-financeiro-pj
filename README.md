@@ -1,5 +1,5 @@
-Sistema de Controle Financeiro
-*Seus gastos na palma da mão*
+Contas em Dia
+**Sistema de Controle Financeiro** · *Seus gastos na palma da mão*
 Um aplicativo web que automatiza a categorização de extratos bancários e gera análises visuais para profissionais autônomos e PJs.
 🚀 Funcionalidades
 ✅ Upload de Extratos - Vários arquivos de uma vez (meses e contas diferentes), CSV ou Excel de qualquer banco (detecta separador, acentuação, linhas de título e formato de valor brasileiro; aceita o ".excel" do BB)  

@@ -43,7 +43,7 @@ from regras import RepositorioRegras, consultar_cnpj, juntar, nova_regra, regras
 # CONFIGURAÇÃO DO APP
 # ============================================================================
 st.set_page_config(
-    page_title="Sistema de Controle Financeiro",
+    page_title="Contas em Dia",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -62,6 +62,8 @@ st.markdown(f"""
 <style>
   .cabecalho {{ border-bottom: 2px solid {DOURADO}; padding-bottom: .4rem; margin-bottom: 1.2rem; }}
   .cabecalho h1 {{ font-weight: 700; margin: 0; padding: 0; }}
+  .cabecalho .sistema {{ text-align: right; font-size: .95rem; margin: 0; opacity: .8;
+                         letter-spacing: .04em; }}
   .cabecalho .slogan {{ text-align: right; color: {DOURADO}; font-style: italic;
                         font-size: 1.05rem; margin: 0; letter-spacing: .02em; }}
   [data-testid="stMetric"] {{ background: color-mix(in srgb, currentColor 4%, transparent);
@@ -123,7 +125,8 @@ st.markdown(f"""
   }}
 </style>
 <div class="cabecalho">
-  <h1>Sistema de Controle Financeiro</h1>
+  <h1>Contas em Dia</h1>
+  <p class="sistema">Sistema de Controle Financeiro</p>
   <p class="slogan">Seus gastos na palma da mão</p>
 </div>
 """, unsafe_allow_html=True)
@@ -701,6 +704,23 @@ with corpo:
     with tab_classificar:
         if st.session_state.get("aviso_regras"):
             st.success(st.session_state.pop("aviso_regras"), icon="✅")
+
+        with st.expander("❓ Como funciona esta aba", expanded=True):
+            st.markdown("""
+            Aqui **você mesmo** corrige a categoria dos gastos — direto na tabela, sem
+            precisar pedir a ninguém. O app aprende e, nos próximos extratos, já classifica
+            esse fornecedor sozinho.
+
+            1. A tabela mostra cada **fornecedor** (por padrão, só os que ficaram em OUTRO ou
+               TRANSFERÊNCIA). Desligue o botão acima da tabela para ver todos.
+            2. **Dê dois cliques** na célula **Categoria** (e, se quiser, em **Subcategoria**)
+               e escolha a opção certa na lista.
+            3. Clique em **💾 Salvar e lembrar**. Pronto: a regra vale para todos os
+               lançamentos desse fornecedor, hoje e nos próximos meses.
+
+            **Consultar CNPJ:** para Pix feitos a empresas, o app consulta a atividade da
+            empresa na Receita Federal e sugere a categoria — você confere e aplica.
+            """)
 
         st.subheader("Corrigir categorias por fornecedor")
         dica("Escolha a categoria e a subcategoria na tabela e clique em Salvar · "
