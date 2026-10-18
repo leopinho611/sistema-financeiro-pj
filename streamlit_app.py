@@ -138,6 +138,35 @@ st.markdown(f"""
               border-radius: 10px; padding: 1rem 1.2rem; margin-bottom: 1rem;
               background: color-mix(in srgb, {DOURADO} 7%, transparent); }}
   .vitrine h3 {{ margin-top: 0; }}
+  /* Área grande de envio na tela inicial */
+  .chamada {{ text-align: center; font-weight: 700; margin: .8rem 0 1rem 0; }}
+  .st-key-upload_grande [data-testid="stFileUploaderDropzone"] {{
+      min-height: 230px; display: flex; flex-direction: column; justify-content: center;
+      align-items: center; gap: .7rem; padding: 1.5rem;
+      border: 2px dashed color-mix(in srgb, {DOURADO} 70%, transparent); border-radius: 14px;
+      background: color-mix(in srgb, {DOURADO} 6%, transparent); cursor: pointer; }}
+  .st-key-upload_grande [data-testid="stFileUploaderDropzone"]:hover {{
+      background: color-mix(in srgb, {DOURADO} 12%, transparent); }}
+  .st-key-upload_grande [data-testid="stFileUploaderDropzone"]::before {{
+      content: "📄\A Arraste seus extratos para cá\A ou"; white-space: pre; text-align: center;
+      font-size: 1.15rem; font-weight: 600; line-height: 1.7; }}
+  .st-key-upload_grande [data-testid="stFileUploaderDropzone"] > span {{ order: 1; }}
+  .st-key-upload_grande [data-testid="stFileUploaderDropzoneInstructions"] {{ order: 2; }}
+  .st-key-upload_grande [data-testid="stBaseButton-secondary"] {{
+      background: {COR_ENTRADAS}; color: #ffffff; border: none; border-radius: 999px;
+      padding: .7rem 1.6rem; font-size: 1.05rem; font-weight: 600; }}
+  .st-key-upload_grande [data-testid="stBaseButton-secondary"]:hover {{
+      background: #2f5aa8; color: #ffffff; }}
+  .st-key-upload_grande [data-testid="stBaseButton-secondary"] p {{ font-size: 1.05rem; }}
+  /* Textos do envio em português */
+  [data-testid="stFileUploaderDropzone"] [data-testid="stBaseButton-secondary"] p {{
+      font-size: 0; }}
+  [data-testid="stFileUploaderDropzone"] [data-testid="stBaseButton-secondary"] p::after {{
+      content: "Escolher arquivos"; font-size: .9rem; }}
+  .st-key-upload_grande [data-testid="stBaseButton-secondary"] p::after {{ font-size: 1.05rem; }}
+  [data-testid="stFileUploaderDropzoneInstructions"] span {{ font-size: 0; }}
+  [data-testid="stFileUploaderDropzoneInstructions"] span::after {{
+      content: "Até 200 MB por arquivo · CSV, Excel, OFX, PDF ou ZIP"; font-size: .8rem; }}
   /* Botões fixos no canto inferior direito */
   .flutuantes {{ position: fixed; right: 1.2rem; bottom: 1.2rem; z-index: 999990;
                  display: flex; flex-direction: column; align-items: flex-end; gap: .55rem; }}
@@ -332,24 +361,25 @@ def _topo_do_eixo(maximo):
     return float(maximo)
 
 
-def _posicoes_dos_nomes(valores, topo):
+def _posicoes_dos_nomes(valores, topo, altura=ALTURA_LINHAS):
     """Afasta os nomes que terminam no mesmo mês e ficariam um em cima do outro.
 
     Recebe os valores finais e devolve o valor (na escala do eixo) onde cada nome vai.
     """
-    px = {k: ALTURA_LINHAS * (1 - v / topo) for k, v in valores.items()}
+    px = {k: altura * (1 - v / topo) for k, v in valores.items()}
     ordem = sorted(px, key=px.get)
     for a, b in zip(ordem, ordem[1:]):
         px[b] = max(px[b], px[a] + DISTANCIA_NOMES)
-    excesso = px[ordem[-1]] - (ALTURA_LINHAS + 6) if ordem else 0
+    excesso = px[ordem[-1]] - (altura + 6) if ordem else 0
     if excesso > 0:   # passou do eixo: sobe todos e volta a afastar de baixo para cima
         px[ordem[-1]] -= excesso
         for a, b in zip(reversed(ordem), list(reversed(ordem))[1:]):
             px[b] = min(px[b], px[a] - DISTANCIA_NOMES)
-    return {k: topo * (1 - y / ALTURA_LINHAS) for k, y in px.items()}
+    return {k: topo * (1 - y / altura) for k, y in px.items()}
 
 
-def grafico_linhas(longo, nome_total="Total", max_series=7, rotulo="Despesa"):
+def grafico_linhas(longo, nome_total="Total", max_series=7, rotulo="Despesa",
+                   altura=ALTURA_LINHAS, largura_nomes=LARGURA_NOMES):
     """Uma linha por série (Mês, Fornecedor, Valor) e uma linha tracejada com o total.
 
     As max_series maiores ganham linha própria; as demais se juntam em "Outros". O nome
@@ -378,7 +408,8 @@ def grafico_linhas(longo, nome_total="Total", max_series=7, rotulo="Despesa"):
     fins = dados.sort_values("Mês").groupby("Fornecedor").tail(1)
     nomes_fim = []
     for rot, grupo in fins.groupby("Rótulo"):
-        pos = _posicoes_dos_nomes(dict(zip(grupo["Fornecedor"], grupo["Valor"])), topo)
+        pos = _posicoes_dos_nomes(dict(zip(grupo["Fornecedor"], grupo["Valor"])), topo,
+                                  altura)
         nomes_fim += [{"Rótulo": rot, "Fornecedor": f, "Valor": v} for f, v in pos.items()]
     nomes_fim = pd.DataFrame(nomes_fim)
 
@@ -403,7 +434,7 @@ def grafico_linhas(longo, nome_total="Total", max_series=7, rotulo="Despesa"):
         tooltip=[alt.Tooltip("Fornecedor:N", title=rotulo),
                  alt.Tooltip("Rótulo:N", title="Mês"), alt.Tooltip("Texto:N", title="Valor")])
     estilo = dict(align="left", baseline="middle", dx=9, fontSize=12,
-                  limit=LARGURA_NOMES - 14, color=cor_do_texto())
+                  limit=largura_nomes - 14, color=cor_do_texto())
     eh_total = nomes_fim["Fornecedor"] == nome_total
     textos = (alt.Chart(nomes_fim[~eh_total]).mark_text(**estilo)
               .encode(x=x, y=y, text="Fornecedor:N")
@@ -417,9 +448,10 @@ def grafico_linhas(longo, nome_total="Total", max_series=7, rotulo="Despesa"):
         tooltip=[alt.Tooltip("Rótulo:N", title="Mês")]
         + [alt.Tooltip(f"{campos[n]}:N", title=n) for n in nomes],
     ).add_params(passa)
+    # "fit": o gráfico ocupa a largura toda, já descontando o espaço dos nomes à direita
     return (linhas + pontos + textos + regua).properties(
-        height=ALTURA_LINHAS, padding={"left": 5, "top": 10, "bottom": 5,
-                                       "right": LARGURA_NOMES})
+        width="container", height=altura, padding={"left": 5, "top": 10, "bottom": 5, "right": 8},
+        autosize=alt.AutoSizeParams(type="fit", contains="padding"))
 
 
 def tabela_em_reais(df, colunas_reais, colunas_pct=()):
@@ -502,17 +534,29 @@ def salvar_regras(novas_comp, novas_pess, descricao):
 # ============================================================================
 # SIDEBAR - UPLOAD
 # ============================================================================
+TIPOS_EXTRATO = ["csv", "xlsx", "xls", "excel", "pdf", "ofx", "zip"]
+# Arquivos enviados pela área grande da tela inicial: guardados na sessão (só na memória)
+# porque aquela área some depois do envio
+st.session_state.setdefault("arquivos_principal", [])
+
 with st.sidebar:
     st.header("📁 Importar Dados")
-    arquivos = st.file_uploader(
+    arquivos_lateral = st.file_uploader(
         "Escolha seus extratos",
-        type=["csv", "xlsx", "xls", "excel", "pdf", "ofx", "zip"],
+        type=TIPOS_EXTRATO,
         accept_multiple_files=True,
         help="Extratos em CSV, Excel ou OFX de qualquer banco, de vários meses e contas. "
              "Em PDF: extrato da conta Nubank e fatura do cartão BB. Pode mandar o mesmo "
              "mês em mais de um formato: as repetições são descartadas. Pode mandar "
              "uma pasta compactada (.zip)."
     )
+    if st.session_state["arquivos_principal"]:
+        st.caption(f"📎 {len(st.session_state['arquivos_principal'])} arquivo(s) enviado(s) "
+                   "pela tela principal")
+        if st.button("Remover esses arquivos"):
+            st.session_state["arquivos_principal"] = []
+            st.rerun()
+    arquivos = list(arquivos_lateral or []) + st.session_state["arquivos_principal"]
     st.caption("🌓 Tema claro ou escuro: menu ⋮ no canto superior direito → Settings")
     nome_titular = st.text_input(
         "Seu nome (opcional)",
@@ -618,15 +662,24 @@ botoes_flutuantes()
 
 with corpo:
     if not arquivos:
-        st.info("👈 Clique em 'Importar Dados' no menu")
+        st.markdown('<h2 class="chamada">Organize suas contas em segundos</h2>',
+                    unsafe_allow_html=True)
+        with st.container(key="upload_grande"):
+            enviados = st.file_uploader("Envie seus extratos", type=TIPOS_EXTRATO,
+                                        accept_multiple_files=True, key="uploader_principal",
+                                        label_visibility="collapsed")
+        if enviados:
+            st.session_state["arquivos_principal"] = list(enviados)
+            st.rerun()
         st.markdown("""
-        ## 🚀 Como Usar
-        1. Exporte seus extratos (CSV, Excel ou OFX) no app ou site do banco.
-           Pode enviar vários meses e várias contas de uma vez.
-        2. Em PDF: extrato da conta Nubank e fatura do cartão BB. Se mandar o mesmo mês
+        ## 🚀 Como usar
+        1. No app ou no site do banco, baixe o **extrato** da conta (CSV, Excel ou OFX) ou
+           a **fatura do cartão**. Pode enviar vários meses e várias contas de uma vez.
+        2. Arraste os arquivos para a área acima, ou clique em **Escolher arquivos**.
+           Também dá para usar o menu lateral (📁 Importar Dados).
+        3. Em PDF: extrato da conta Nubank e fatura do cartão BB. Se mandar o mesmo mês
            em mais de um formato, as repetições são descartadas
-        3. Confira se as colunas foram identificadas certo
-        4. Veja o resumo, o mês a mês e as transações categorizadas
+        4. Pronto: veja o resumo, o mês a mês e as transações já separadas por categoria
 
         **Movimentações internas** (aplicação/resgate automático, transferência entre
         suas contas e pagamento de fatura do cartão) não contam como entrada nem saída.
@@ -803,6 +856,9 @@ with corpo:
                   help="Aplicações menos resgates no período (Rende Fácil, caixinhas, fundos...). "
                        "Não entra em entradas nem saídas.")
 
+        # Ranking e, logo abaixo, a evolução mês a mês (as 5 maiores, o resto em "Outros",
+        # e o total), cada um embaixo do seu par
+        varios_meses = df["Mês"].nunique() > 1
         c1, c2 = st.columns(2)
         with c1:
             st.subheader("De onde vem")
@@ -810,31 +866,28 @@ with corpo:
                 st.info("Não há entradas no período.")
             else:
                 st.markdown(ranking_html(tipos_entrada, "Entrada"), unsafe_allow_html=True)
+                if varios_meses:
+                    ent_mes = (df_entradas.groupby(["Mês", "Categoria"], as_index=False)["Valor"]
+                               .sum().rename(columns={"Categoria": "Fornecedor"}))
+                    st.altair_chart(grafico_linhas(ent_mes, "Total", max_series=5, rotulo="Tipo",
+                                                   altura=260, largura_nomes=135),
+                                    width="stretch")
         with c2:
             st.subheader("Para onde vai")
             if cats.empty:
                 st.info("Não há saídas no período.")
             else:
                 st.markdown(ranking_html(cats, "Saída"), unsafe_allow_html=True)
+                if varios_meses:
+                    sai_mes = (df[df["Tipo"] == "Saída"].assign(Valor=lambda d: -d["Valor"])
+                               .groupby(["Mês", "Categoria"], as_index=False)["Valor"].sum()
+                               .rename(columns={"Categoria": "Fornecedor"}))
+                    st.altair_chart(grafico_linhas(sai_mes, "Total", max_series=5,
+                                                   rotulo="Categoria", altura=260,
+                                                   largura_nomes=135), width="stretch")
+        if varios_meses:
+            dica("Passe o mouse sobre os gráficos para ver os valores de cada mês")
         dica("Os detalhes, com as fontes e os fornecedores, estão nas abas 💰 Entradas e 💸 Saídas")
-
-        # Evolução mês a mês: as 5 maiores séries, o resto em "Outros", e o total
-        if df["Mês"].nunique() > 1:
-            if not tipos_entrada.empty:
-                st.subheader("De onde vem, mês a mês")
-                dica("Passe o mouse sobre o gráfico para ver os valores de cada mês")
-                ent_mes = (df_entradas.groupby(["Mês", "Categoria"], as_index=False)["Valor"]
-                           .sum().rename(columns={"Categoria": "Fornecedor"}))
-                st.altair_chart(grafico_linhas(ent_mes, "Total de entradas", max_series=5,
-                                               rotulo="Tipo"), width="stretch")
-            if not cats.empty:
-                st.subheader("Para onde vai, mês a mês")
-                dica("Passe o mouse sobre o gráfico para ver os valores de cada mês")
-                sai_mes = (df[df["Tipo"] == "Saída"].assign(Valor=lambda d: -d["Valor"])
-                           .groupby(["Mês", "Categoria"], as_index=False)["Valor"].sum()
-                           .rename(columns={"Categoria": "Fornecedor"}))
-                st.altair_chart(grafico_linhas(sai_mes, "Total de saídas", max_series=5,
-                                               rotulo="Categoria"), width="stretch")
 
         if not internas.empty:
             st.subheader("Movimentações internas")
