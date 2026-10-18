@@ -59,13 +59,13 @@ def test_converter_valor(entrada, esperado):
     ("PostoMacaco PARNAMIRIM", "TRANSPORTE"),
     ("PMSP MULTA TRANSITO", "TRANSPORTE"),          # multa de trânsito não é tarifa
     ("Pagamento de boleto efetuado - SEFAZ DISTRITO FEDERAL", "TRANSPORTE"),  # IPVA
-    ("LAPV SERV EMPRESARIAIS FLORIANOPOLIS", "SERVIÇOS"),
+    ("LAPV SERV EMPRESARIAIS FLORIANOPOLIS", "SERVIÇOS DE TERCEIROS"),
     ("Brasas Food - Loja", "ALIMENTAÇÃO"),
-    ("GASTOS DIVERSOS", "OUTRO"),        # "gas" não pode casar dentro de "gastos"
+    ("GASTOS DIVERSOS", "SERVIÇOS DE TERCEIROS"),        # "gas" não pode casar dentro de "gastos"
     ("APLICACAO CDB", "APLICAÇÃO/RESGATE"),
     ("BB Rende Fácil - Rende Facil", "APLICAÇÃO/RESGATE"),
     ("Pagto cartão crédito - VISA", "PAGAMENTO DE FATURA"),
-    ("ALGO QUALQUER", "OUTRO"),
+    ("ALGO QUALQUER", "SERVIÇOS DE TERCEIROS"),
 ])
 def test_categorizar(descricao, categoria):
     assert categorizar(descricao, -10) == categoria
@@ -338,7 +338,9 @@ def test_resumo_fornecedores_top_10_e_outros():
     ("CASA", "LEROY MERLIN PARNAMIRIM", "Manutenções"),
     ("CASA", "Pix - CONDOMINIO RESIDENCIAL", "Condomínio"),
     ("SHOPPING", "LOJA X", "Outros"),
-    ("SERVIÇOS", "CONSULTORIA X", ""),   # categoria sem subcategorias
+    ("SERVIÇOS DE TERCEIROS", "CONSULTORIA X", "Consultoria e assessoria"),
+    ("SERVIÇOS DE TERCEIROS", "ALGO QUALQUER", "Não identificados"),
+    ("EDUCAÇÃO", "ESCOLA X", ""),   # categoria sem subcategorias
 ])
 def test_subcategorizar(categoria, descricao, sub):
     from financeiro import subcategorizar
@@ -379,7 +381,7 @@ def test_extrair_cnpj():
     (5611201, ("ALIMENTAÇÃO", "Restaurante")),
     ("8640-2/05", ("SAÚDE", "Clínicas, consultas e exames")),
     ("4711302", ("ALIMENTAÇÃO", "Supermercado")),
-    ("6920601", ("SERVIÇOS", "")),
+    ("6920601", ("SERVIÇOS DE TERCEIROS", "Contabilidade")),
     ("0111301", None),
     ("", None),
 ])
@@ -706,3 +708,23 @@ def test_resumos_de_entradas():
     fontes = resumo_fornecedores(t, "Recebido de empresas", tipo="Entrada", n=1)
     assert fontes["Fornecedor"].tolist() == ["Cliente A", "Outras fontes (1)"]
     assert fontes["% da categoria"].tolist() == [75.0, 25.0]
+
+
+def test_regra_antiga_com_categoria_renomeada():
+    from financeiro import aplicar_regras, nao_identificado
+    t = pd.DataFrame({"Fornecedor": ["Loja X", "Firma Y"],
+                      "Categoria": ["SERVIÇOS DE TERCEIROS"] * 2,
+                      "Subcategoria": ["Não identificados"] * 2,
+                      "Tipo": ["Saída", "Saída"], "Valor": [-10.0, -20.0]})
+    r = aplicar_regras(t, _regras([("loja x", "Loja X", "OUTRO", "", "usuario"),
+                                   ("firma y", "Firma Y", "SERVIÇOS", "", "usuario")]))
+    assert r["Categoria"].tolist() == ["SERVIÇOS DE TERCEIROS"] * 2
+    assert nao_identificado("SERVIÇOS DE TERCEIROS", "Não identificados")
+    assert not nao_identificado("SERVIÇOS DE TERCEIROS", "Contabilidade")
+    assert not nao_identificado("CASA", "")
+
+
+def test_fatura_servico_reconhecido_nao_vira_secao():
+    from financeiro import categorizar
+    assert categorizar("CONTABILIDADE EXEMPLO", -10.0, padrao=None) == "SERVIÇOS DE TERCEIROS"
+    assert categorizar("ALGO QUALQUER", -10.0, padrao=None) is None

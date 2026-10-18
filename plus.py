@@ -10,7 +10,7 @@ import re
 
 import pandas as pd
 
-from financeiro import chave_fornecedor, extrair_cnpj, normalizar
+from financeiro import chave_fornecedor, extrair_cnpj, nao_identificado, normalizar
 
 # ============================================================================
 # PARCELAS FUTURAS DO CARTÃO
@@ -83,7 +83,7 @@ CONTA_MENSAL = "Conta mensal (valor varia)"
 FREQUENTE = "Gasto frequente"
 # Restaurante uma vez por mês é hábito, não conta: nessas categorias o que não tem
 # valor fixo fica como gasto frequente
-CATEGORIAS_SEM_CONTA = {"ALIMENTAÇÃO", "SHOPPING", "LAZER", "TRANSFERÊNCIA", "OUTRO"}
+CATEGORIAS_SEM_CONTA = {"ALIMENTAÇÃO", "SHOPPING", "LAZER", "TRANSFERÊNCIA"}
 
 
 def gastos_recorrentes(t, min_meses=3, variacao_fixo=0.15, frequencia_minima=0.5):
@@ -121,7 +121,9 @@ def gastos_recorrentes(t, min_meses=3, variacao_fixo=0.15, frequencia_minima=0.5
         fixo = (uma_vez_por_mes and mediana > 0
                 and (por_mes - mediana).abs().max() / mediana <= variacao_fixo)
         conta = (not fixo and uma_vez_por_mes and len(por_mes) / len(janela) >= 0.8
-                 and g["Categoria"].mode().iat[0] not in CATEGORIAS_SEM_CONTA)
+                 and g["Categoria"].mode().iat[0] not in CATEGORIAS_SEM_CONTA
+                 and not nao_identificado(g["Categoria"].mode().iat[0],
+                                          g["Subcategoria"].mode().iat[0]))
         tipo = FIXO if fixo else CONTA_MENSAL if conta else FREQUENTE
         ativo = ultimo >= todos_meses[-1] - 1
         ultima = g["Data"].max()
