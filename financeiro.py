@@ -57,12 +57,18 @@ CATEGORIAS = {
                          "conselho regional"],
     "TARIFAS BANCÁRIAS": ["tarifa", "iof", "juros", "anuidade", "cesta", "encargo",
                           "multa"],
-    "SERVIÇOS": ["consultoria", "consulting", "assessoria", "contabilidade",
-                 "serv empresariais", "servicos empresariais", "getninjas"],
+    "SERVIÇOS DE TERCEIROS": ["consultoria", "consulting", "assessoria", "contabilidade",
+                              "contabil*", "serv empresariais", "servicos empresariais",
+                              "getninjas", "advocacia", "advogad*", "cartorio"],
     "TRANSFERÊNCIA": ["pix", "ted", "doc", "transferencia", "transf"],
 }
 CATEGORIA_ENTRADA = "RECEITA"
-CATEGORIA_PADRAO = "OUTRO"
+# O que não foi reconhecido fica em serviços de terceiros, na subcategoria
+# "Não identificados" (é o que aparece para classificar)
+CATEGORIA_PADRAO = "SERVIÇOS DE TERCEIROS"
+SUB_NAO_IDENTIFICADO = "Não identificados"
+# Nomes antigos, para regras salvas antes da mudança
+CATEGORIAS_ANTIGAS = {"SERVIÇOS": CATEGORIA_PADRAO, "OUTRO": CATEGORIA_PADRAO}
 CATEGORIA_ESTORNO = "ESTORNO"
 CATEGORIA_CARTAO = "CARTÃO DE CRÉDITO"   # pagamento de fatura quando a fatura não foi importada
 
@@ -127,11 +133,12 @@ def sem_dados_bancarios(descricao):
     return texto.strip(" -")
 
 
-def categorizar(descricao, valor=None):
+def categorizar(descricao, valor=None, padrao=CATEGORIA_PADRAO):
     """Categoria de uma transação. Entradas (valor > 0) viram RECEITA.
 
     Aplicações/resgates e pagamento de fatura são identificados primeiro,
-    nos dois sentidos, porque são movimentações internas.
+    nos dois sentidos, porque são movimentações internas. Se nada for reconhecido,
+    devolve `padrao`.
     """
     texto = normalizar(sem_dados_bancarios(descricao)).replace("mercado livre", "mercadolivre")
     if _PADRAO_APLICACAO.search(texto):
@@ -140,10 +147,10 @@ def categorizar(descricao, valor=None):
         return CATEGORIA_FATURA
     if valor is not None and valor > 0:
         return CATEGORIA_ENTRADA
-    for categoria, padrao in _PADROES.items():
-        if padrao.search(texto):
+    for categoria, palavras in _PADROES.items():
+        if palavras.search(texto):
             return categoria
-    return CATEGORIA_PADRAO
+    return padrao
 
 
 # ============================================================================
@@ -484,6 +491,13 @@ SUBCATEGORIAS = {
         "IOF e juros": ["iof", "juros", "encargo"],
     },
 }
+SUBCATEGORIAS[CATEGORIA_PADRAO] = {
+    "Consultoria e assessoria": ["consultoria", "consulting", "assessoria", "serv empresariais",
+                                 "servicos empresariais"],
+    "Contabilidade": ["contabilidade", "contabil*"],
+    "Advocacia e cartório": ["advocacia", "advogad*", "cartorio"],
+    "Serviços por aplicativo": ["getninjas"],
+}
 SUBCATEGORIA_OUTROS = "Outros"
 # Tipos de entrada reconhecidos pelas palavras; o resto é separado por quem pagou
 TIPOS_ENTRADA = {
@@ -536,7 +550,14 @@ def subcategorizar(categoria, descricao, fornecedor="", secao=""):
     # A seção da fatura do BB só decide quando nenhuma palavra-chave casou
     if categoria == "ALIMENTAÇÃO" and secao in SECOES_FATURA_SUB:
         return SECOES_FATURA_SUB[secao]
+    if categoria == CATEGORIA_PADRAO:
+        return SUB_NAO_IDENTIFICADO   # nenhuma palavra de serviço: não foi reconhecido
     return SUBCATEGORIA_OUTROS
+
+
+def nao_identificado(categoria, subcategoria):
+    """A saída ficou sem categoria reconhecida (vai para a lista de classificar)."""
+    return categoria == CATEGORIA_PADRAO and subcategoria in (SUB_NAO_IDENTIFICADO, "")
 
 
 # ============================================================================
@@ -596,11 +617,11 @@ CNAE_CATEGORIAS = {
     "9329": ("LAZER", "Passeios e eventos"),
     "85": ("EDUCAÇÃO", ""),
     "4761": ("EDUCAÇÃO", ""),
-    "6911": ("SERVIÇOS", ""),
-    "6920": ("SERVIÇOS", ""),
-    "70": ("SERVIÇOS", ""),
-    "74": ("SERVIÇOS", ""),
-    "82": ("SERVIÇOS", ""),
+    "6911": (CATEGORIA_PADRAO, "Advocacia e cartório"),
+    "6920": (CATEGORIA_PADRAO, "Contabilidade"),
+    "70": (CATEGORIA_PADRAO, "Consultoria e assessoria"),
+    "74": (CATEGORIA_PADRAO, "Consultoria e assessoria"),
+    "82": (CATEGORIA_PADRAO, "Consultoria e assessoria"),
 }
 
 
@@ -632,7 +653,7 @@ def chave_fornecedor(fornecedor):
 
 def categorias_editaveis():
     """Categorias que o usuário pode escolher para uma saída."""
-    return list(CATEGORIAS) + [CATEGORIA_PADRAO]
+    return list(CATEGORIAS)
 
 
 def subcategorias_de(categoria):
@@ -662,12 +683,13 @@ def aplicar_regras(t, regras):
                                                               and len(k) >= 5)), None)
         if regra is None:
             continue
-        t.at[i, "Categoria"] = regra.categoria
+        categoria = CATEGORIAS_ANTIGAS.get(regra.categoria, regra.categoria)
+        t.at[i, "Categoria"] = categoria
         if isinstance(regra.fornecedor, str) and regra.fornecedor.strip():
             # a regra também unifica o nome ("Lapv Consulting" e "Lapv Serv..." -> "Lapv")
             t.at[i, "Fornecedor"] = regra.fornecedor.strip()
         sub = regra.subcategoria if isinstance(regra.subcategoria, str) else ""
-        validas = subcategorias_de(regra.categoria)
+        validas = subcategorias_de(categoria)
         t.at[i, "Subcategoria"] = sub if sub in validas else validas[-1] if validas != [""] else ""
     return t
 
@@ -883,8 +905,8 @@ def ler_fatura_bb(texto, conta="BB Cartão"):
         else:
             # Palavras-chave primeiro: a seção da fatura às vezes erra
             # (sacolão em "Saúde"); ela só decide quando nada foi reconhecido
-            categoria = categorizar(descricao, valor)
-            if categoria in (CATEGORIA_PADRAO, "TRANSFERÊNCIA"):
+            categoria = categorizar(descricao, valor, padrao=None)
+            if categoria in (None, "TRANSFERÊNCIA"):
                 categoria = SECOES_FATURA_BB.get(secao, CATEGORIA_PADRAO)
         linhas.append({"Data": data, "Descrição": descricao, "Valor": valor,
                        "Categoria": categoria, "Fornecedor": fornecedor,

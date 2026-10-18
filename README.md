@@ -34,11 +34,10 @@ Subcategorias: ALIMENTAÇÃO (Supermercado, Restaurante, Padaria, Hortifruti e a
 👕 SHOPPING - Roupas, sapatos, loja, etc
 💳 IMPOSTOS E TAXAS - IRPF, DARF, Simples Nacional, SEFAZ, Prefeitura, GRU, etc
 📺 ASSINATURAS - Netflix, Spotify, Claude, etc
-🧾 SERVIÇOS - Consultoria, assessoria, contabilidade, etc
+🧾 SERVIÇOS DE TERCEIROS - Consultoria, assessoria, contabilidade, advocacia, etc; e o que não foi identificado (subcategoria "Não identificados")
 🏦 TARIFAS BANCÁRIAS - Tarifas, IOF, juros, anuidade, etc
 🔁 TRANSFERÊNCIA - PIX, TED, DOC sem outra categoria identificada
 💵 RECEITA - Todas as entradas
-❓ OUTRO - O que não foi identificado
 🔄 Movimentações internas (fora de entradas e saídas): APLICAÇÃO/RESGATE, TRANSFERÊNCIA ENTRE CONTAS, PAGAMENTO DE FATURA
 🛠️ Tech Stack
 Frontend: Streamlit

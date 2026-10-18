@@ -21,6 +21,8 @@ for _modulo in ("financeiro", "regras", "plus"):   # nessa ordem: os outros impo
 
 from financeiro import (
     CATEGORIA_APLICACAO,
+    CATEGORIA_PADRAO,
+    SUB_NAO_IDENTIFICADO,
     aplicar_regras,
     carregar_arquivo,
     categoria_do_cnae,
@@ -33,6 +35,7 @@ from financeiro import (
     extrair_cnpj,
     formatar_reais,
     montar_transacoes,
+    nao_identificado,
     subcategorias_de,
     coluna_pct,
     resumo_categorias,
@@ -945,9 +948,13 @@ with corpo:
                  "nas linhas abertas, o % é sobre o grupo de cima")
             st.markdown(tabela_categorias_html(cats, df), unsafe_allow_html=True)
 
-            outros = cats.loc[cats["Categoria"] == "OUTRO", "% das saídas"]
-            if not outros.empty and outros.iloc[0] > 20:
-                st.caption(f"ℹ️ {outros.iloc[0]:.0f}% das saídas ficaram em OUTRO. "
+            so_saidas = df[df["Tipo"] == "Saída"]
+            sem_id = [nao_identificado(c, sc) for c, sc in
+                      zip(so_saidas["Categoria"], so_saidas["Subcategoria"])]
+            pct_sem_id = so_saidas.loc[sem_id, "Valor"].sum() / so_saidas["Valor"].sum() * 100 \
+                if so_saidas["Valor"].sum() else 0
+            if pct_sem_id > 20:
+                st.caption(f"ℹ️ {pct_sem_id:.0f}% das saídas não foram identificadas. "
                            + ("Classifique na aba ⭐ Classificar." if PLUS else
                               "Veja a aba 🔎 Consultar CNPJ."))
 
@@ -1024,6 +1031,9 @@ with corpo:
                                      for x in subcategorias_de(c) if x})
     saidas_forn = todos[todos["Tipo"] == "Saída"].assign(
         chave=lambda d: d["FornecedorOriginal"].map(chave_fornecedor))
+    # Pendentes: não identificados e transferências sem outra categoria
+    saidas_forn["pendente"] = [c == "TRANSFERÊNCIA" or nao_identificado(c, sc) for c, sc in
+                               zip(saidas_forn["Categoria"], saidas_forn["Subcategoria"])]
     # Recorrentes, parcelas e IR olham todo o histórico das contas escolhidas (o filtro
     # de período cortaria parcelas e meses); a saúde financeira segue o período
     df_contas = todos[todos["Conta"].isin(filtro_contas)]
@@ -1043,7 +1053,7 @@ with corpo:
         if st.session_state.get("aviso_regras"):
             st.success(st.session_state.pop("aviso_regras"), icon="✅")
         conhecidas = set(regras_todas["chave"])
-        pend = saidas_forn[saidas_forn["Categoria"].isin(["OUTRO", "TRANSFERÊNCIA"])
+        pend = saidas_forn[saidas_forn["pendente"]
                            & ~saidas_forn["chave"].isin(conhecidas)].copy()
         pend["CNPJ"] = pend["Descrição"].map(extrair_cnpj)
         pend = (pend.dropna(subset=["CNPJ"]).groupby(["chave", "CNPJ"])
@@ -1064,8 +1074,9 @@ with corpo:
                     "Aplicar": sugestao is not None, "chave": r.chave, "Fornecedor": r.Fornecedor,
                     "CNPJ": r.CNPJ, "Nome na Receita": info["nome"] if info else "(não encontrado)",
                     "Atividade principal (CNAE)": f"{info['cnae']} · {info['atividade']}" if info else "",
-                    "Categoria": sugestao[0] if sugestao else "OUTRO",
-                    "Subcategoria": (sugestao[1] or SEM_SUB) if sugestao else SEM_SUB,
+                    "Categoria": sugestao[0] if sugestao else CATEGORIA_PADRAO,
+                    "Subcategoria": (sugestao[1] or SEM_SUB) if sugestao
+                    else SUB_NAO_IDENTIFICADO,
                     "cnae": info["cnae"] if info else "", "mei": bool(info and info["mei"]),
                     "Total": formatar_reais(r.Total),
                 })
@@ -1129,8 +1140,10 @@ with corpo:
 
         with tab_vitrine:
             st.markdown('<div class="vitrine"><h3>⭐ Contas em Dia Plus</h3>'
-                        'Análises prontas a partir dos mesmos extratos — continua sem guardar '
-                        'nada.</div>', unsafe_allow_html=True)
+                        'Análises prontas a partir dos mesmos extratos. Seus extratos e '
+                        'relatórios também não ficam guardados: ao fechar o app, tudo é apagado '
+                        '(baixe as planilhas que quiser). Só as classificações que você salvar '
+                        'são lembradas.</div>', unsafe_allow_html=True)
             st.markdown("**O que o Plus já encontrou nos seus extratos:**")
             v1, v2, v3 = st.columns(3)
             v1.metric("Contas que se repetem todo mês", formatar_reais(compromissos),
@@ -1144,9 +1157,10 @@ with corpo:
                           formatar_reais(dedu["Total"].sum()),
                           help="Saúde, educação, previdência privada e pensão.")
             st.markdown("""
-            - **⭐ Imposto de Renda** — despesas que podem ser deduzidas (saúde, educação,
-              PGBL, pensão) com o CNPJ de quem recebeu, e os rendimentos recebidos de empresas
-              e de pessoas. Pronto para levar ao contador, em planilha.
+            - **⭐ Imposto de Renda** — despesas que possivelmente podem ser deduzidas (saúde,
+              educação, PGBL, pensão) com o CNPJ de quem recebeu (caso seja localizável no
+              extrato), e os rendimentos recebidos de empresas e de pessoas. Pronto para levar
+              ao contador, em planilha.
             - **⭐ Fixos e parcelas** — o que se repete todo mês, a data prevista do
               próximo, e as parcelas do cartão que ainda faltam (quantas e quanto, mês a mês).
             - **⭐ Saúde financeira** — indicadores com semáforo: quanto sobra, meses no
@@ -1320,8 +1334,8 @@ with corpo:
             Aqui **você mesmo** corrige a categoria dos gastos — direto na tabela. O app
             aprende e, nos próximos extratos, já classifica esse fornecedor sozinho.
 
-            1. A tabela mostra cada **fornecedor** (por padrão, só os que ficaram em OUTRO ou
-               TRANSFERÊNCIA). Desligue o botão acima da tabela para ver todos.
+            1. A tabela mostra cada **fornecedor** (por padrão, só os não identificados e as
+               transferências). Desligue o botão acima da tabela para ver todos.
             2. **Dê dois cliques** na célula **Categoria** (e, se quiser, em **Subcategoria**)
                e escolha a opção certa na lista.
             3. Clique em **💾 Salvar e lembrar**. Pronto: a regra vale para todos os
@@ -1335,17 +1349,19 @@ with corpo:
         st.subheader("Corrigir categorias por fornecedor")
         dica("Escolha a categoria e a subcategoria na tabela e clique em Salvar · "
              "o app lembra nas próximas vezes, para todos os lançamentos desse fornecedor")
-        so_pendentes = st.toggle("Mostrar só OUTRO e TRANSFERÊNCIA", value=True)
+        so_pendentes = st.toggle("Mostrar só os não identificados e as transferências",
+                                 value=True)
 
         grupo = (saidas_forn.groupby("chave")
                  .agg(Fornecedor=("Fornecedor", lambda v: max(v.unique(), key=len)),
                       Categoria=("Categoria", lambda v: v.mode().iat[0]),
                       Subcategoria=("Subcategoria", lambda v: v.mode().iat[0]),
                       Total=("Valor", lambda v: -v.sum()),
-                      Transações=("Valor", "count"))
+                      Transações=("Valor", "count"),
+                      pendente=("pendente", "any"))
                  .sort_values("Total", ascending=False).reset_index())
         if so_pendentes:
-            grupo = grupo[grupo["Categoria"].isin(["OUTRO", "TRANSFERÊNCIA"])].reset_index(drop=True)
+            grupo = grupo[grupo["pendente"]].reset_index(drop=True)
         grupo["Subcategoria"] = grupo["Subcategoria"].replace("", SEM_SUB).fillna(SEM_SUB)
         grupo["Valor"] = grupo["Total"].map(formatar_reais)
 
