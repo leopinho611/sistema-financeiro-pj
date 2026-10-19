@@ -643,6 +643,23 @@ def _email_com_texto(assunto, corpo):
         if EMAIL_CONTATO else None
 
 
+def _gmail_com_texto(assunto, corpo):
+    """Abre a tela de escrever do Gmail no navegador (o "mailto:" só funciona quando há um
+    programa de e-mail configurado no computador; com Gmail no navegador, não abre nada)."""
+    return (f"https://mail.google.com/mail/?view=cm&fs=1&to={quote(EMAIL_CONTATO)}"
+            f"&su={quote(assunto)}&body={quote(corpo)}") if EMAIL_CONTATO else None
+
+
+def botoes_email(colunas, assunto, corpo, disabled=False):
+    """Gmail no navegador e outro programa de e-mail, mais o endereço para copiar."""
+    c_gmail, c_app = colunas
+    c_gmail.link_button("✉️ Gmail", _gmail_com_texto(assunto, corpo),
+                        disabled=disabled)
+    c_app.link_button("📧 Outro e-mail", _email_com_texto(assunto, corpo),
+                      disabled=disabled)
+    st.caption(f"Ou escreva para **{EMAIL_CONTATO}** (assunto: {assunto}).")
+
+
 @st.dialog("⭐ Assinar o Contas em Dia Plus")
 def abrir_assinatura():
     """Assinar em 2 passos: pagar pelo link e mandar o comprovante (é assim que o código
@@ -654,21 +671,19 @@ def abrir_assinatura():
         st.link_button("💳 Pagar com Pix", LINK_ASSINATURA, type="primary")
     else:
         st.caption("Peça os dados para pagamento no passo 2.")
-    st.markdown("**2. Envie o comprovante**")
+    st.markdown("**2. Envie o comprovante** pelo WhatsApp ou por e-mail")
     nome = st.text_input("Nome completo do titular dos extratos",
                          help="Como aparece no seu extrato. O código Plus vale para essa pessoa.",
                          placeholder="Ex: Maria da Silva Souza")
     texto = ("Olá! Acabei de assinar o Contas em Dia Plus.\n"
              f"Nome completo do titular (como aparece no extrato): {nome.strip() or '______'}\n"
              "Segue o comprovante do pagamento.")
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     if LINK_CONSULTORIA:
-        c1.link_button("📱 Enviar pelo WhatsApp", _whatsapp_com_texto(LINK_CONSULTORIA, texto),
+        c1.link_button("📱 WhatsApp", _whatsapp_com_texto(LINK_CONSULTORIA, texto),
                        disabled=not nome.strip())
     if EMAIL_CONTATO:
-        c2.link_button("✉️ Enviar por e-mail",
-                       _email_com_texto("Assinatura Contas em Dia Plus", texto),
-                       disabled=not nome.strip())
+        botoes_email((c2, c3), "Assinatura Contas em Dia Plus", texto, disabled=not nome.strip())
     if not nome.strip():
         st.caption("Digite o nome para liberar os botões. Anexe o comprovante na mensagem.")
     st.markdown("**3. Receba seu código**")
@@ -708,16 +723,16 @@ def secao_ajuda():
     for pergunta, resposta in duvidas:
         with st.expander(pergunta):
             st.markdown(resposta)
-    st.markdown("**Ainda com dúvida ou encontrou um problema?**")
-    c1, c2 = st.columns(2)
+    st.markdown("**Ainda com dúvida ou encontrou um problema?** Fale com a gente pelo "
+                "WhatsApp ou por e-mail:")
+    c1, c2, c3 = st.columns(3)
     if LINK_CONSULTORIA:
-        c1.link_button("📱 Falar pelo WhatsApp", _whatsapp_com_texto(
+        c1.link_button("📱 WhatsApp", _whatsapp_com_texto(
             LINK_CONSULTORIA, "Olá! Tenho uma dúvida sobre o Contas em Dia:"))
     if EMAIL_CONTATO:
-        c2.link_button("✉️ Reportar um problema por e-mail", _email_com_texto(
-            "Contas em Dia - problema",
-            "O que eu estava fazendo:\n\nO que aconteceu:\n\nBanco e formato do arquivo "
-            "(ex.: Nubank, PDF):\n\n(Por segurança, não anexe extratos.)"))
+        botoes_email((c2, c3), "Contas em Dia - problema",
+                     "O que eu estava fazendo:\n\nO que aconteceu:\n\nBanco e formato do "
+                     "arquivo (ex.: Nubank, PDF):\n\n(Por segurança, não anexe extratos.)")
     st.caption(PRAZO_RESPOSTA)
 st.session_state.setdefault("plus", False)
 # O acesso vence durante o uso se o dia acabar
