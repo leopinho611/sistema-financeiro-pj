@@ -186,11 +186,19 @@ st.markdown(f"""
   .flutuantes .plus {{ background: {DOURADO}; color: #0f1a2e !important; }}
   .flutuantes .whats {{ background: #25d366; color: #0b2e17 !important; }}
   .flutuantes svg {{ width: 1.35rem; height: 1.35rem; flex: none; }}
+  .st-key-assinar_flutuante {{ position: fixed; right: 1.2rem; bottom: 4.6rem; z-index: 999990;
+                               width: auto !important; }}
+  .st-key-assinar_flutuante button {{ background: {DOURADO}; color: #0f1a2e; border: none;
+                                      border-radius: 999px; padding: .6rem 1.05rem;
+                                      font-weight: 600; box-shadow: 0 3px 12px rgba(0,0,0,.25); }}
+  .st-key-assinar_flutuante button:hover {{ background: #d8b23a; color: #0f1a2e; }}
+  .st-key-assinar_flutuante button p {{ font-weight: 600; }}
   .flutuantes .curto {{ display: none; }}
   /* Espaço no fim da página para os botões não cobrirem o rodapé */
   [data-testid="stMainBlockContainer"] {{ padding-bottom: 8rem; }}
   @media (max-width: 640px) {{
     .flutuantes {{ right: .8rem; bottom: .8rem; }}
+    .st-key-assinar_flutuante {{ right: .8rem; bottom: 3.9rem; }}
     .flutuantes a {{ font-size: .8rem; padding: .5rem .85rem; }}
     .flutuantes .longo {{ display: none; }}
     .flutuantes .curto {{ display: inline; }}
@@ -618,6 +626,99 @@ def entrar_no_plus(codigo, nome):
 CHAVE_PLUS = ler_segredo("PLUS_CHAVE") or ""
 LINK_ASSINATURA = ler_segredo("PLUS_LINK")
 LINK_CONSULTORIA = ler_segredo("CONTATO_CONSULTORIA")
+EMAIL_CONTATO = ler_segredo("CONTATO_EMAIL")
+PRECO_PLUS = ler_segredo("PLUS_PRECO")   # opcional, só para mostrar ("R$ 19,90 por mês")
+PRAZO_RESPOSTA = "Respondemos em até 1 dia útil."
+
+
+def _whatsapp_com_texto(link, texto):
+    """Link do WhatsApp (wa.me) com a mensagem já escrita."""
+    if not link or "wa.me" not in link:
+        return link
+    return f"{link}{'&' if '?' in link else '?'}text={quote(texto)}"
+
+
+def _email_com_texto(assunto, corpo):
+    return f"mailto:{EMAIL_CONTATO}?subject={quote(assunto)}&body={quote(corpo)}" \
+        if EMAIL_CONTATO else None
+
+
+@st.dialog("⭐ Assinar o Contas em Dia Plus")
+def abrir_assinatura():
+    """Assinar em 2 passos: pagar pelo link e mandar o comprovante (é assim que o código
+    chega: pelo mesmo canal em que a pessoa mandou o comprovante). Nada é guardado."""
+    st.markdown("Relatório em PDF, Imposto de Renda, fixos e parcelas, saúde financeira e "
+                "classificação que o app lembra." + (f" **{PRECO_PLUS}**." if PRECO_PLUS else ""))
+    st.markdown("**1. Pague pelo link**")
+    if LINK_ASSINATURA:
+        st.link_button("💳 Pagar com Pix", LINK_ASSINATURA, type="primary")
+    else:
+        st.caption("Peça os dados para pagamento no passo 2.")
+    st.markdown("**2. Envie o comprovante**")
+    nome = st.text_input("Nome completo do titular dos extratos",
+                         help="Como aparece no seu extrato. O código Plus vale para essa pessoa.",
+                         placeholder="Ex: Maria da Silva Souza")
+    texto = ("Olá! Acabei de assinar o Contas em Dia Plus.\n"
+             f"Nome completo do titular (como aparece no extrato): {nome.strip() or '______'}\n"
+             "Segue o comprovante do pagamento.")
+    c1, c2 = st.columns(2)
+    if LINK_CONSULTORIA:
+        c1.link_button("📱 Enviar pelo WhatsApp", _whatsapp_com_texto(LINK_CONSULTORIA, texto),
+                       disabled=not nome.strip())
+    if EMAIL_CONTATO:
+        c2.link_button("✉️ Enviar por e-mail",
+                       _email_com_texto("Assinatura Contas em Dia Plus", texto),
+                       disabled=not nome.strip())
+    if not nome.strip():
+        st.caption("Digite o nome para liberar os botões. Anexe o comprovante na mensagem.")
+    st.markdown("**3. Receba seu código**")
+    st.caption(f"O código chega pelo mesmo canal, depois da confirmação do pagamento. "
+               f"{PRAZO_RESPOSTA} Para usar: menu lateral → ⭐ Tenho um código Plus.")
+
+
+def secao_ajuda():
+    """Dúvidas frequentes e contato (sem guardar nada)."""
+    st.subheader("❓ Ajuda")
+    duvidas = [
+        ("Como baixo o extrato do meu banco?",
+         "No app ou no site do banco, abra o **extrato** da conta (ou a **fatura** do cartão) e "
+         "procure a opção de **exportar, compartilhar ou baixar**. O app lê CSV, Excel e OFX de "
+         "qualquer banco e, em PDF, os extratos do Nubank, Sicredi e XP e a fatura do cartão BB. "
+         "Quanto mais meses, melhores as análises."),
+        ("Meu arquivo não foi reconhecido. E agora?",
+         "Abra **📂 Arquivos lidos** para ver o motivo. Se o banco oferecer, tente outro formato "
+         "(OFX ou CSV costumam funcionar melhor que PDF). Se não der certo, fale com a gente "
+         "pelo botão abaixo e diga qual é o banco e o formato. **Não envie o extrato.**"),
+        ("Meus dados ficam guardados?",
+         "Não. Os extratos ficam só na memória enquanto o app está aberto e são apagados ao "
+         "fechar. O que fica guardado são as classificações que você salvar (nome da empresa → "
+         "categoria), sem valores nem datas."),
+        ("Uma categoria está errada.",
+         "Na área aberta, a aba **🔎 Consultar CNPJ** ajuda com Pix para empresas. No Plus, a "
+         "aba **⭐ Classificar** corrige qualquer fornecedor e o app lembra nas próximas vezes."),
+        ("Como funciona o código Plus?",
+         "Depois do pagamento, você recebe um código pelo WhatsApp ou e-mail. No menu lateral, "
+         "abra **⭐ Tenho um código Plus**, cole o código e digite o nome completo do titular, "
+         "igual ao informado na compra. O código vale até a data de validade."),
+        ("Meu código não funciona ou venceu.",
+         "Confira se o nome está igual ao informado na compra (acentos e maiúsculas não "
+         "importam). Se venceu, renove pelo botão **⭐ Assinar área Plus**. Não há cobrança "
+         "automática: o acesso simplesmente termina na data."),
+    ]
+    for pergunta, resposta in duvidas:
+        with st.expander(pergunta):
+            st.markdown(resposta)
+    st.markdown("**Ainda com dúvida ou encontrou um problema?**")
+    c1, c2 = st.columns(2)
+    if LINK_CONSULTORIA:
+        c1.link_button("📱 Falar pelo WhatsApp", _whatsapp_com_texto(
+            LINK_CONSULTORIA, "Olá! Tenho uma dúvida sobre o Contas em Dia:"))
+    if EMAIL_CONTATO:
+        c2.link_button("✉️ Reportar um problema por e-mail", _email_com_texto(
+            "Contas em Dia - problema",
+            "O que eu estava fazendo:\n\nO que aconteceu:\n\nBanco e formato do arquivo "
+            "(ex.: Nubank, PDF):\n\n(Por segurança, não anexe extratos.)"))
+    st.caption(PRAZO_RESPOSTA)
 st.session_state.setdefault("plus", False)
 # O acesso vence durante o uso se o dia acabar
 if st.session_state["plus"] and st.session_state.get("plus_ate") \
@@ -654,9 +755,9 @@ with st.sidebar:
                     else:
                         st.session_state.pop("aviso_plus", None)
                         st.rerun()
-            if LINK_ASSINATURA:
-                st.link_button("Quero o Plus" if not st.session_state.get("aviso_plus")
-                               else "Renovar o Plus", LINK_ASSINATURA)
+            if st.button("Quero o Plus" if not st.session_state.get("aviso_plus")
+                         else "Renovar o Plus", key="assinar_lateral"):
+                abrir_assinatura()
 PLUS = st.session_state["plus"]
 
 # ============================================================================
@@ -762,21 +863,18 @@ ICONE_WHATSAPP = (
     '.5.7 0 1.6-1.3 3-3 3-4.9-.4-9.4-4.9-9.8-9.8 0-1.7 1.4-2.9 1.5-2.9z"/></svg>')
 
 
-def _whatsapp_com_texto(link, texto):
-    """Link do WhatsApp (wa.me) com a mensagem já escrita."""
-    if not link or "wa.me" not in link:
-        return link
-    return f"{link}{'&' if '?' in link else '?'}text={quote(texto)}"
-
-
 def botoes_flutuantes():
     """Assinar o Plus e falar com um especialista: sempre à vista, no canto da tela."""
     botoes = []
-    assinar = LINK_ASSINATURA or _whatsapp_com_texto(
-        LINK_CONSULTORIA, "Olá! Quero assinar a área Plus do Contas em Dia.")
-    if assinar and not PLUS:
-        botoes.append(f'<a class="plus" href="{escape(assinar)}" target="_blank" '
-                      'rel="noopener">⭐ Assinar área Plus</a>')
+    if not PLUS and (LINK_ASSINATURA or LINK_CONSULTORIA or EMAIL_CONTATO):
+        # Botão do Streamlit (abre a janela de assinatura sem recarregar a página nem perder
+        # os extratos enviados), fixado no canto pelo CSS de .st-key-assinar_flutuante
+        with st.container(key="assinar_flutuante"):
+            if st.button("⭐ Assinar área Plus", key="assinar_canto"):
+                abrir_assinatura()
+        if not LINK_CONSULTORIA:
+            st.markdown("<style>.st-key-assinar_flutuante {bottom: 1.2rem !important;}</style>",
+                        unsafe_allow_html=True)
     if LINK_CONSULTORIA:
         falar = _whatsapp_com_texto(LINK_CONSULTORIA, "Olá! Quero falar com um especialista "
                                                       "financeiro/contábil.")
@@ -817,6 +915,8 @@ with corpo:
         **Movimentações internas** (aplicação/resgate automático, transferência entre
         suas contas e pagamento de fatura do cartão) não contam como entrada nem saída.
         """)
+        with st.expander("❓ Dúvidas frequentes e contato"):
+            secao_ajuda()
         st.stop()
 
     tabelas = []
@@ -979,7 +1079,7 @@ with corpo:
                   "📥 Download"]
     nomes_abas += (["⭐ Relatório", "⭐ Imposto de Renda", "⭐ Fixos e parcelas",
                     "⭐ Saúde financeira", "⭐ Classificar"] if PLUS
-                   else ["🔎 Consultar CNPJ", "⭐ Plus"])
+                   else ["🔎 Consultar CNPJ", "⭐ Plus"]) + ["❓ Ajuda"]
     abas = st.tabs(nomes_abas)
     tab_resumo, tab_entradas, tab_saidas, tab_mes, tab_transacoes, tab_download = abas[:6]
 
@@ -1282,7 +1382,9 @@ with corpo:
         st.rerun()
 
     if not PLUS:
-        tab_cnpj, tab_vitrine = abas[6:]
+        tab_cnpj, tab_vitrine, tab_ajuda = abas[6:]
+        with tab_ajuda:
+            secao_ajuda()
 
         with tab_cnpj:
             st.subheader("Consultar CNPJ na Receita")
@@ -1336,15 +1438,17 @@ with corpo:
                         "Plus*, cole o código e digite seu nome completo. O código vale para os "
                         "extratos do titular, até a data de validade.")
             b1, b2 = st.columns(2)
-            if LINK_ASSINATURA:
-                b1.link_button("⭐ Quero o Plus", LINK_ASSINATURA, type="primary")
+            if b1.button("⭐ Quero o Plus", type="primary", key="assinar_vitrine"):
+                abrir_assinatura()
             if LINK_CONSULTORIA:
                 b2.link_button("💬 Falar com um especialista", LINK_CONSULTORIA)
             if not LINK_ASSINATURA and not LINK_CONSULTORIA:
                 st.caption("As assinaturas abrem em breve.")
         st.stop()
 
-    tab_relatorio, tab_ir, tab_recorrentes, tab_saude, tab_classificar = abas[6:]
+    tab_relatorio, tab_ir, tab_recorrentes, tab_saude, tab_classificar, tab_ajuda = abas[6:]
+    with tab_ajuda:
+        secao_ajuda()
 
     # ----------------------------------------------------------------------------
     with tab_relatorio:

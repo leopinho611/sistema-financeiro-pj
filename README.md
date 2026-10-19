@@ -69,12 +69,15 @@ PLUS_CHAVE = "..."          # chave que assina os códigos (a página de adminis
 ADMIN_SENHA = "..."         # senha da página de administração
 PLUS_LINK = "https://..."   # link de pagamento ("Assinar área Plus")
 CONTATO_CONSULTORIA = "https://wa.me/..."   # opcional: botão "Falar com um especialista"
+CONTATO_EMAIL = "..."       # opcional: e-mail de atendimento (assinatura e "Reportar um problema")
+PLUS_PRECO = "R$ 19,90 por mês"   # opcional: texto do preço na janela de assinatura
 PLUS_BLOQUEADOS = ""        # opcional: códigos cancelados (as 4 letras do meio, por vírgula)
 PLUS_CODIGOS = ["teste"]    # opcional: códigos fixos, sem validade (testes e cortesias)
 ```
-**Venda:** a pessoa paga pelo link; quando o pagamento cai, abra o app com `?admin=1` no fim
+**Venda:** em "⭐ Assinar área Plus" a pessoa paga pelo link e manda o comprovante, com o
+nome do titular, pelo WhatsApp ou e-mail (mensagem já escrita). Quando o pagamento cai, abra o app com `?admin=1` no fim
 do endereço, entre com a senha, informe o nome completo do titular e a validade, e envie o
-código gerado. O app não guarda nada: confere a assinatura, a validade e o nome na hora.
+código gerado no mesmo chat. O app não guarda nada: confere a assinatura, a validade e o nome na hora.
 O código só funciona com o nome do titular, e o Plus é bloqueado quando um extrato em PDF
 mostra outro titular. Não troque a `PLUS_CHAVE` depois de vender: os códigos deixariam de valer.
 
