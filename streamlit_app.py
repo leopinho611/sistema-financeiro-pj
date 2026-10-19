@@ -1,10 +1,12 @@
 import io
-from datetime import datetime
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from html import escape
 from urllib.parse import quote
 
 import hmac
 import importlib
+import secrets
 import sys
 
 import altair as alt
@@ -15,7 +17,7 @@ import streamlit as st
 # Depois de uma atualização, o Streamlit Cloud recarrega este arquivo mas pode
 # manter na memória a versão antiga de financeiro.py e regras.py, e o app quebra
 # com ImportError até alguém reiniciar. Recarregá-los aqui evita isso.
-for _modulo in ("financeiro", "regras", "plus", "relatorio", "exemplo"):   # nessa ordem
+for _modulo in ("financeiro", "regras", "codigos", "plus", "relatorio", "exemplo"):   # nessa ordem
     if _modulo in sys.modules:
         importlib.reload(sys.modules[_modulo])
 
@@ -45,6 +47,7 @@ from financeiro import (
 )
 from regras import RepositorioRegras, consultar_cnpj, juntar, nova_regra, regras_vazias
 import exemplo
+import codigos
 import plus
 import relatorio
 
@@ -589,36 +592,155 @@ def _lista_segredo(nome):
     return [str(v).strip() for v in valor if str(v).strip()]
 
 
-def codigo_valido(codigo):
+def hoje_brasil():
+    return datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+
+
+def entrar_no_plus(codigo, nome):
+    """Confere o código. Aceita os códigos assinados (com validade e titular) e os da
+    lista fixa PLUS_CODIGOS (para testes e cortesias, sem validade). Retorna o erro ou ""."""
     codigo = (codigo or "").strip()
-    return bool(codigo) and any(hmac.compare_digest(codigo.encode(), c.encode())
-                                for c in _lista_segredo("PLUS_CODIGOS"))
+    if not codigo:
+        return "Digite o código."
+    if any(hmac.compare_digest(codigo.encode(), c.encode())
+           for c in _lista_segredo("PLUS_CODIGOS")):
+        st.session_state.update(plus=True, plus_ate=None, plus_titular="")
+        return ""
+    r = codigos.validar_codigo(CHAVE_PLUS, codigo, nome, hoje=hoje_brasil(),
+                               bloqueados=set(_lista_segredo("PLUS_BLOQUEADOS")))
+    if r["ok"]:
+        st.session_state.update(plus=True, plus_ate=r["validade"],
+                                plus_titular=" ".join(nome.split()))
+        return ""
+    return r["motivo"]
 
 
+CHAVE_PLUS = ler_segredo("PLUS_CHAVE") or ""
 LINK_ASSINATURA = ler_segredo("PLUS_LINK")
 LINK_CONSULTORIA = ler_segredo("CONTATO_CONSULTORIA")
 st.session_state.setdefault("plus", False)
+# O acesso vence durante o uso se o dia acabar
+if st.session_state["plus"] and st.session_state.get("plus_ate") \
+        and st.session_state["plus_ate"] < hoje_brasil():
+    st.session_state["plus"] = False
+    st.session_state["aviso_plus"] = (f"Seu acesso Plus venceu em "
+                                      f"{st.session_state['plus_ate']:%d/%m/%Y}.")
 
 with st.sidebar:
     st.divider()
     if st.session_state["plus"]:
-        st.markdown("⭐ **Plus ativo**")
+        ate = st.session_state.get("plus_ate")
+        st.markdown("⭐ **Plus ativo**" + (f" até {ate:%d/%m/%Y}" if ate else ""))
+        if st.session_state.get("plus_titular"):
+            st.caption(f"Titular: {st.session_state['plus_titular']}")
         if st.button("Sair do Plus"):
             st.session_state["plus"] = False
             st.rerun()
     else:
-        with st.expander("⭐ Tenho um código Plus"):
-            with st.form("form_plus", clear_on_submit=True, border=False):
+        if st.session_state.get("aviso_plus"):
+            st.warning(st.session_state["aviso_plus"])
+        with st.expander("⭐ Tenho um código Plus",
+                         expanded=bool(st.session_state.get("aviso_plus"))):
+            with st.form("form_plus", border=False):
                 codigo = st.text_input("Código de acesso", type="password")
+                nome_plus = st.text_input(
+                    "Nome completo do titular",
+                    help="O mesmo nome informado na compra, como aparece no seu extrato. O "
+                         "Plus vale para os extratos dessa pessoa.")
                 if st.form_submit_button("Entrar"):
-                    if codigo_valido(codigo):
-                        st.session_state["plus"] = True
-                        st.rerun()
+                    erro = entrar_no_plus(codigo, nome_plus)
+                    if erro:
+                        st.error(erro)
                     else:
-                        st.error("Código inválido.")
+                        st.session_state.pop("aviso_plus", None)
+                        st.rerun()
             if LINK_ASSINATURA:
-                st.link_button("Quero o Plus", LINK_ASSINATURA)
+                st.link_button("Quero o Plus" if not st.session_state.get("aviso_plus")
+                               else "Renovar o Plus", LINK_ASSINATURA)
 PLUS = st.session_state["plus"]
+
+# ============================================================================
+# ADMINISTRAÇÃO (endereço do app + ?admin=1): gerar códigos Plus
+# ============================================================================
+def pagina_admin():
+    st.subheader("🔧 Administração · Códigos Plus")
+    senha_certa = ler_segredo("ADMIN_SENHA") or ""
+    if not senha_certa:
+        st.info("Para usar esta página, crie o segredo ADMIN_SENHA (uma senha forte) em "
+                "Settings → Secrets do app.")
+        return
+    if not st.session_state.get("admin_ok"):
+        with st.form("form_admin", border=False):
+            senha = st.text_input("Senha de administrador", type="password")
+            if st.form_submit_button("Entrar"):
+                if hmac.compare_digest(senha.encode(), senha_certa.encode()):
+                    st.session_state["admin_ok"] = True
+                    st.rerun()
+                st.error("Senha incorreta.")
+        return
+    if st.button("Sair da administração"):
+        st.session_state["admin_ok"] = False
+        st.rerun()
+    if not CHAVE_PLUS:
+        st.warning("Falta a chave que assina os códigos. Em Settings → Secrets, acrescente a "
+                   "linha abaixo (gerada agora, aleatória) e salve. Não troque essa chave "
+                   "depois: os códigos já vendidos deixariam de valer.")
+        st.code(f'PLUS_CHAVE = "{secrets.token_urlsafe(32)}"', language="toml")
+        return
+
+    st.markdown("#### Gerar código")
+    st.caption("Depois que o pagamento cair: informe o nome completo do titular (como aparece "
+               "no extrato dele) e a validade.")
+    with st.form("form_gerar"):
+        nome = st.text_input("Nome completo do titular")
+        prazo = st.radio("Validade", ["30 dias", "3 meses", "1 ano", "Escolher a data"],
+                         horizontal=True)
+        data_escolhida = st.date_input("Data (se escolher a data)",
+                                       value=hoje_brasil() + timedelta(days=30),
+                                       format="DD/MM/YYYY")
+        gerar = st.form_submit_button("Gerar código", type="primary")
+    if gerar:
+        dias = {"30 dias": 30, "3 meses": 92, "1 ano": 366}.get(prazo)
+        validade = hoje_brasil() + timedelta(days=dias) if dias else data_escolhida
+        try:
+            codigo = codigos.gerar_codigo(CHAVE_PLUS, nome, validade)
+        except ValueError as e:
+            st.error(str(e).capitalize())
+        else:
+            nome = " ".join(nome.split())
+            st.success(f"Código de {nome}, válido até {validade:%d/%m/%Y}:")
+            st.code(codigo, language=None)
+            st.markdown("**Mensagem pronta para enviar:**")
+            st.code(f"Olá, {nome.split()[0]}! Seu acesso ao Contas em Dia Plus está "
+                    f"liberado até {validade:%d/%m/%Y}.\n\nCódigo: {codigo}\n\nNo app, "
+                    "abra o menu lateral → ⭐ Tenho um código Plus, cole o código e digite "
+                    f"seu nome completo: {nome}", language=None)
+            st.markdown("**Para o seu controle** (cole numa planilha; o app não guarda):")
+            st.code(f"{hoje_brasil():%d/%m/%Y};{nome};{codigo.split('-')[2]};"
+                    f"{validade:%d/%m/%Y};{codigo}", language=None)
+
+    st.markdown("#### Conferir um código")
+    with st.form("form_conferir"):
+        c1, c2 = st.columns(2)
+        cod = c1.text_input("Código")
+        nom = c2.text_input("Nome completo do titular")
+        if st.form_submit_button("Conferir"):
+            r = codigos.validar_codigo(CHAVE_PLUS, cod, nom, hoje=hoje_brasil(),
+                                       bloqueados=set(_lista_segredo("PLUS_BLOQUEADOS")))
+            if r["ok"]:
+                st.success(f"Válido até {r['validade']:%d/%m/%Y} (identificação {r['ident']}).")
+            else:
+                st.error(r["motivo"])
+
+    st.markdown("#### Cancelar um código")
+    st.caption("Para cancelar antes do vencimento (estorno, uso indevido), acrescente a "
+               "identificação do código (as 4 letras do meio, ex.: K7Q2) ao segredo "
+               "PLUS_BLOQUEADOS, separadas por vírgula: PLUS_BLOQUEADOS = \"K7Q2, AB3D\"")
+
+
+if st.query_params.get("admin") == "1":
+    pagina_admin()
+    st.stop()
 
 # ============================================================================
 # PROCESSAMENTO
@@ -794,10 +916,21 @@ with corpo:
 
     # Sem o nome digitado, usa o titular que veio no extrato (para achar as transferências
     # entre as próprias contas)
-    titular_usado = nome_titular.strip() or (titulares[0] if titulares else "")
+    titular_plus = st.session_state.get("plus_titular", "") if PLUS else ""
+    titular_usado = (nome_titular.strip() or titular_plus
+                     or (titulares[0] if titulares else ""))
     if not nome_titular.strip() and titulares:
         st.caption(f"👤 Titular identificado no extrato: **{titulares[0]}**. As transferências "
                    "para esse nome em outro banco contam como movimentação entre suas contas.")
+    # O código Plus vale para um titular: extratos de outra pessoa (quando o PDF traz o nome)
+    # ficam fora das análises do Plus
+    outros_titulares = sorted({t for t in titulares
+                               if titular_plus and not codigos.mesmo_titular(titular_plus, t)})
+    if outros_titulares:
+        PLUS = False
+        st.error(f"Seu código Plus é de **{titular_plus}**, mas há extrato de outra pessoa "
+                 f"({', '.join(outros_titulares)}). Para usar o Plus, envie só os seus "
+                 "extratos. As análises gratuitas continuam disponíveis.", icon="🔒")
     if len({chave_fornecedor(x) for x in titulares}) > 1:
         st.info("Os extratos enviados são de titulares diferentes.", icon="ℹ️")
     todos = consolidar(tabelas, titular_usado)
@@ -889,25 +1022,28 @@ with corpo:
                 st.info("Não há entradas no período.")
             else:
                 st.markdown(ranking_html(tipos_entrada, "Entrada"), unsafe_allow_html=True)
-                if varios_meses:
-                    ent_mes = (df_entradas.groupby(["Mês", "Categoria"], as_index=False)["Valor"]
-                               .sum().rename(columns={"Categoria": "Fornecedor"}))
-                    st.altair_chart(grafico_linhas(ent_mes, "Total", max_series=5, rotulo="Tipo",
-                                                   altura=260, largura_nomes=135),
-                                    width="stretch")
         with c2:
             st.subheader("Para onde vai")
             if cats.empty:
                 st.info("Não há saídas no período.")
             else:
                 st.markdown(ranking_html(cats, "Saída"), unsafe_allow_html=True)
-                if varios_meses:
-                    sai_mes = (df[df["Tipo"] == "Saída"].assign(Valor=lambda d: -d["Valor"])
-                               .groupby(["Mês", "Categoria"], as_index=False)["Valor"].sum()
-                               .rename(columns={"Categoria": "Fornecedor"}))
-                    st.altair_chart(grafico_linhas(sai_mes, "Total", max_series=5,
-                                                   rotulo="Categoria", altura=260,
-                                                   largura_nomes=135), width="stretch")
+        # Os gráficos numa linha própria: começam na mesma altura, mesmo quando uma lista é
+        # mais comprida que a outra
+        if varios_meses:
+            g1, g2 = st.columns(2)
+            if not tipos_entrada.empty:
+                ent_mes = (df_entradas.groupby(["Mês", "Categoria"], as_index=False)["Valor"]
+                           .sum().rename(columns={"Categoria": "Fornecedor"}))
+                g1.altair_chart(grafico_linhas(ent_mes, "Total", max_series=5, rotulo="Tipo",
+                                               altura=260, largura_nomes=135), width="stretch")
+            if not cats.empty:
+                sai_mes = (df[df["Tipo"] == "Saída"].assign(Valor=lambda d: -d["Valor"])
+                           .groupby(["Mês", "Categoria"], as_index=False)["Valor"].sum()
+                           .rename(columns={"Categoria": "Fornecedor"}))
+                g2.altair_chart(grafico_linhas(sai_mes, "Total", max_series=5,
+                                               rotulo="Categoria", altura=260,
+                                               largura_nomes=135), width="stretch")
         if varios_meses:
             dica("Passe o mouse sobre os gráficos para ver os valores de cada mês")
         dica("Os detalhes, com as fontes e os fornecedores, estão nas abas 💰 Entradas e 💸 Saídas")
@@ -1195,8 +1331,10 @@ with corpo:
             st.download_button("📄 Ver um relatório de exemplo (PDF, dados fictícios)",
                                relatorio_de_exemplo(), "Relatorio_Contas_em_Dia_exemplo.pdf",
                                "application/pdf")
-            st.markdown("**Como ter acesso:** digite seu código em *⭐ Tenho um código Plus*, "
-                        "no menu lateral.")
+            st.markdown("**Como ter acesso:** faça o pagamento em *⭐ Assinar área Plus* e "
+                        "receba seu código. Depois, no menu lateral, abra *⭐ Tenho um código "
+                        "Plus*, cole o código e digite seu nome completo. O código vale para os "
+                        "extratos do titular, até a data de validade.")
             b1, b2 = st.columns(2)
             if LINK_ASSINATURA:
                 b1.link_button("⭐ Quero o Plus", LINK_ASSINATURA, type="primary")
@@ -1221,21 +1359,14 @@ with corpo:
         """)
         st.caption(f"Usa as contas e o período escolhidos no menu lateral ({periodo}). A reserva "
                    "de emergência usa o valor informado na aba ⭐ Saúde financeira.")
-        assinatura = (tuple(filtro_contas), periodo, len(df), st.session_state.get("guardado"))
-        if st.button("Gerar relatório", type="primary"):
-            with st.spinner("Montando o relatório..."):
-                try:
-                    dados_rel = relatorio.montar_relatorio(
-                        df, guardado=st.session_state.get("guardado") or None)
-                    st.session_state["relatorio_pdf"] = (assinatura, relatorio.gerar_pdf(dados_rel))
-                except Exception as e:
-                    st.error(f"Não foi possível gerar o relatório: {e}")
-        pronto = st.session_state.get("relatorio_pdf")
-        if pronto and pronto[0] == assinatura:
-            st.download_button("📥 Baixar relatório (PDF)", pronto[1],
-                               f"Relatorio_Contas_em_Dia_{datetime.now():%Y%m%d}.pdf",
-                               "application/pdf")
-            st.caption("🔒 O relatório é gerado na memória e não fica guardado.")
+        def pdf_do_relatorio(t=df, guardado=st.session_state.get("guardado") or None):
+            # Só roda no clique: o PDF é montado na hora e entregue para download
+            return relatorio.gerar_pdf(relatorio.montar_relatorio(t, guardado=guardado))
+
+        st.download_button("📥 Baixar relatório (PDF)", pdf_do_relatorio,
+                           f"Relatorio_Contas_em_Dia_{datetime.now():%Y%m%d}.pdf",
+                           "application/pdf", type="primary", on_click="ignore")
+        st.caption("🔒 O relatório é montado na hora do clique, na memória, e não fica guardado.")
 
     # ----------------------------------------------------------------------------
     with tab_ir:
