@@ -1,9 +1,10 @@
 """
-Relatório Contas em Dia (área Plus): um PDF de 3 páginas, em linguagem simples.
+Relatório Contas em Dia (área Plus): um PDF de 4 páginas, em linguagem simples.
 
 1. Seu dinheiro em uma página: nota geral, números do período, destaques e o mês a mês
-2. Para onde foi e o que já está comprometido: categorias, fornecedores, fixos e parcelas
-3. Atenção, imposto e próximos passos: indicadores, prévia do IR, sugestões e como o
+2. Para onde foi: categorias, subcategorias e maiores gastos
+3. O que já está comprometido: próximos 3 meses, contas que se repetem e parcelas
+4. Atenção, imposto e próximos passos: indicadores, prévia do IR, sugestões e como o
    relatório foi feito
 
 montar_relatorio() calcula o conteúdo (testável, sem PDF); gerar_pdf() desenha.
@@ -63,29 +64,89 @@ def _variacao_recente(t, meses_recentes=3, base_minima=300.0):
             "antes": float(base[categoria]), "agora": float(recente[categoria])}
 
 
-def _destaques(t, mensal, entradas, saidas, variacao):
+def _nome_grupo(categoria, subcategoria):
+    """Subcategoria quando ela diz algo; senão a categoria ("Viagens", "Educação")."""
+    if subcategoria and subcategoria not in ("Outros", "Não identificados"):
+        return subcategoria
+    return categoria.capitalize()
+
+
+def _destaques(t, mensal, variacao, comprometido_mes, media_saidas):
+    """Até 3 frases sobre os gastos (o que saiu é sempre gasto; o que entrou pode ser
+    renda, transferência ou reembolso, por isso as frases não falam de renda)."""
+    s = t[t["Tipo"] == "Saída"].assign(V=lambda d: -d["Valor"])
     frases = []
-    if entradas > 0:
-        sobra = entradas - saidas
-        if sobra >= 0:
-            frases.append(f"Você guardou <b>{_pct(sobra / entradas * 100)}</b> do que entrou: "
-                          f"{formatar_reais(sobra)} no período.")
-        else:
-            frases.append(f"Você gastou <b>{formatar_reais(-sobra)} a mais</b> do que recebeu "
-                          "no período.")
     if len(mensal) > 1:
         caro = mensal.loc[mensal["Saídas"].idxmax()]
-        s = t[(t["Tipo"] == "Saída") & (t["Mês"] == caro["Mês"])]
-        puxou = s.groupby("Categoria")["Valor"].sum().idxmin() if not s.empty else ""
+        acima = caro["Saídas"] - media_saidas
+        # O que mais passou da própria média naquele mês
+        grupos = s.groupby(["Categoria", "Subcategoria", "Mês"])["V"].sum().unstack(fill_value=0)
+        if caro["Mês"] in grupos:
+            excesso = grupos[caro["Mês"]] - grupos.mean(axis=1)
+            cat, sub = excesso.idxmax()
+            pesou = (f" O que mais pesou: {_nome_grupo(cat, sub)} "
+                     f"({formatar_reais(grupos.loc[(cat, sub), caro['Mês']])}).")
+        else:
+            pesou = ""
         frases.append(f"Seu mês mais caro foi <b>{rotulo_mes(caro['Mês'])}</b>: "
-                      f"{formatar_reais(caro['Saídas'])}, puxado por {puxou.capitalize()}.")
+                      f"{formatar_reais(caro['Saídas'])}, {formatar_reais(acima)} acima da sua "
+                      f"média mensal.{pesou}")
     if variacao and abs(variacao["variacao"]) >= 10:
         verbo = "subiu" if variacao["variacao"] > 0 else "caiu"
-        frases.append(f"<b>{variacao['categoria'].capitalize()}</b> {verbo} "
-                      f"{_pct(abs(variacao['variacao']))} nos últimos 3 meses: de "
-                      f"{formatar_reais(variacao['antes'])} para "
-                      f"{formatar_reais(variacao['agora'])} por mês.")
+        cat = variacao["categoria"]
+        meses = sorted(s["Mês"].unique())
+        sc = s[s["Categoria"] == cat]
+        por_sub = sc.groupby(["Subcategoria", "Mês"])["V"].sum().unstack(fill_value=0)
+        puxada = ""
+        if len(por_sub) > 1 or (len(por_sub) == 1 and por_sub.index[0]):
+            dif = (por_sub.reindex(columns=meses, fill_value=0)[meses[-3:]].mean(axis=1)
+                   - por_sub.reindex(columns=meses, fill_value=0)[meses[:-3]].mean(axis=1))
+            sub = dif.idxmax() if verbo == "subiu" else dif.idxmin()
+            if sub:
+                puxada = f", principalmente em {sub}"
+        frases.append(f"<b>{cat.capitalize()}</b> {verbo} {_pct(abs(variacao['variacao']))} nos "
+                      f"últimos 3 meses: de {formatar_reais(variacao['antes'])} para "
+                      f"{formatar_reais(variacao['agora'])} por mês{puxada}.")
+    if comprometido_mes and media_saidas:
+        frases.append(f"Contas fixas e parcelas já somam <b>{formatar_reais(comprometido_mes)} "
+                      f"por mês</b>: {_pct(comprometido_mes / media_saidas * 100)} do que você "
+                      "gasta em média. É o valor que sai antes de qualquer escolha.")
+    if len(frases) < 3 and not s.empty:
+        maior = s.loc[s["V"].idxmax()]
+        frases.append(f"Seu maior gasto único foi <b>{formatar_reais(maior['V'])}</b> em "
+                      f"{maior['Fornecedor']} ({maior['Data']:%d/%m/%Y}).")
     return frases[:3]
+
+
+def _onde_foi(t, cats, var_cat, n_categorias=5, n_subs=4, n_maiores=3):
+    """Maiores categorias, com subcategorias e maiores gastos (% sobre a categoria)."""
+    s = t[t["Tipo"] == "Saída"].assign(V=lambda d: -d["Valor"])
+    blocos = []
+    for _, c in cats.head(n_categorias).iterrows():
+        sc = s[s["Categoria"] == c["Categoria"]]
+        total = c["Total"]
+        subs = []
+        por_sub = sc.groupby("Subcategoria")["V"].sum().sort_values(ascending=False)
+        if len(por_sub) > 1 or (len(por_sub) == 1 and por_sub.index[0]):
+            for nome, v in por_sub.head(n_subs).items():
+                subs.append({"nome": nome or "Outros", "total": v, "pct": v / total * 100})
+            resto = por_sub.iloc[n_subs:]
+            if not resto.empty:
+                subs.append({"nome": f"Outras ({len(resto)})", "total": resto.sum(),
+                             "pct": resto.sum() / total * 100})
+        forn = (sc.assign(_k=sc["Fornecedor"].map(chave_fornecedor))
+                .groupby("_k").agg(nome=("Fornecedor", "first"), total=("V", "sum"),
+                                   vezes=("V", "count"))
+                .sort_values("total", ascending=False).head(n_maiores))
+        maiores = [{"nome": f.nome, "total": f.total, "vezes": int(f.vezes),
+                    "pct": f.total / total * 100} for f in forn.itertuples()]
+        blocos.append({"categoria": c["Categoria"], "total": total,
+                       "pct": c["% das saídas"], "var": var_cat.get(c["Categoria"]),
+                       "subs": subs, "maiores": maiores})
+    resto = cats.iloc[n_categorias:]
+    demais = ({"n": len(resto), "total": resto["Total"].sum(),
+               "pct": resto["% das saídas"].sum()} if not resto.empty else None)
+    return blocos, demais
 
 
 def _sugestoes(itens, cats, parcelas, saidas_mes, pct_nao_id, guardado):
@@ -157,10 +218,7 @@ def montar_relatorio(t, guardado=None, hoje=None):
         rec, ant = pv[meses[-3:]].mean(axis=1), pv[meses[:-3]].mean(axis=1)
         var_cat = {c: (rec[c] - ant[c]) / ant[c] * 100 for c in pv.index if ant[c] >= 100}
 
-    fornecedores = (s.assign(_k=s["Fornecedor"].map(chave_fornecedor), V=-s["Valor"])
-                    .groupby("_k").agg(Fornecedor=("Fornecedor", "first"), Total=("V", "sum"),
-                                       Vezes=("V", "count"), Categoria=("Categoria", "first"))
-                    .sort_values("Total", ascending=False).head(5).reset_index(drop=True))
+    onde_foi, demais = _onde_foi(t, cats, var_cat)
 
     # Já comprometido nos próximos 3 meses: contas que se repetem + parcelas do cartão
     ultimo = pd.Period(t["Data"].max(), freq="M")
@@ -168,6 +226,12 @@ def montar_relatorio(t, guardado=None, hoje=None):
     crono = dict(zip(cronograma["Mês"], cronograma["Valor"])) if not cronograma.empty else {}
     comprometido = [{"Mês": m, "Contas fixas": compromissos, "Parcelas": crono.get(m, 0.0)}
                     for m in proximos]
+
+    # Séries mês a mês para os gráficos: contas que se repetem (histórico) e parcelas (futuro)
+    fixos = recorrentes[(recorrentes["Situação"] == "Ativo")
+                        & recorrentes["Tipo"].isin([plus.FIXO, plus.CONTA_MENSAL])]
+    hist_fixos = plus.historico_recorrentes(t, fixos)
+    serie_parcelas = plus.cronograma_por_compra(parcelas)
 
     anos = sorted(t["Data"].dt.year.unique())
     ir = plus.relatorio_ir(t, anos[-1]) if anos else None
@@ -178,11 +242,14 @@ def montar_relatorio(t, guardado=None, hoje=None):
         "entradas": entradas, "saidas": saidas, "sobra": entradas - saidas,
         "media_entradas": entradas / n_meses, "media_saidas": saidas / n_meses,
         "n_meses": n_meses, "mensal": mensal, "categorias": cats, "var_cat": var_cat,
-        "fornecedores": fornecedores, "recorrentes": recorrentes, "compromissos": compromissos,
+        "onde_foi": onde_foi, "demais": demais, "hist_fixos": hist_fixos,
+        "serie_parcelas": serie_parcelas, "recorrentes": recorrentes,
+        "compromissos": compromissos,
         "parcelas": parcelas, "comprometido": comprometido, "indicadores": itens,
         "nota": nota, "contagem": contagem, "pct_nao_id": pct_nao_id, "guardado": guardado,
         "ano_ir": anos[-1] if anos else None, "ir": ir,
-        "destaques": _destaques(t, mensal, entradas, saidas, variacao),
+        "destaques": _destaques(t, mensal, variacao, compromissos + parcela_prox,
+                                saidas / n_meses),
         "sugestoes": _sugestoes(itens, cats, parcelas,
                                 {"n": n_meses, "media": saidas / n_meses}, pct_nao_id, guardado),
     }
@@ -307,7 +374,7 @@ def _nota_geral(dados, e):
     cor, rotulo = SINAL[dados["nota"]]
     c = dados["contagem"]
     detalhe = (f"{c[plus.BOM]} indicador(es) bom(ns), {c[plus.ATENCAO]} em atenção e "
-               f"{c[plus.ALERTA]} em alerta. Detalhes na página 3.")
+               f"{c[plus.ALERTA]} em alerta. Detalhes na página 4.")
     d = Drawing(LARGURA, 46)
     d.add(Rect(0, 0, LARGURA, 46, fillColor=OSSO, strokeColor=None))
     d.add(Rect(0, 0, 5, 46, fillColor=cor, strokeColor=None))
@@ -320,38 +387,137 @@ def _nota_geral(dados, e):
     return d
 
 
-def _grafico_mensal(mensal):
-    altura = 150
-    d = Drawing(LARGURA, altura + 22)
-    g = VerticalBarChart()
-    g.x, g.y, g.width, g.height = 42, 18, LARGURA - 50, altura - 20
-    g.data = [list(mensal["Entradas"]), list(mensal["Saídas"])]
-    g.categoryAxis.categoryNames = [rotulo_mes(m) for m in mensal["Mês"]]
-    g.categoryAxis.labels.fontSize = 7
-    g.categoryAxis.labels.fontName = "Helvetica"
-    g.valueAxis.labels.fontName = "Helvetica"
-    g.categoryAxis.labels.fillColor = CINZA
-    g.categoryAxis.strokeColor = LINHA
-    g.valueAxis.valueMin = 0
-    g.valueAxis.labels.fontSize = 7
-    g.valueAxis.labels.fillColor = CINZA
-    g.valueAxis.labelTextFormat = lambda v: f"{v:,.0f}".replace(",", ".")
-    g.valueAxis.strokeColor = None
-    g.valueAxis.visibleGrid = True
-    g.valueAxis.gridStrokeColor = colors.HexColor("#ebe6da")
-    g.bars[0].fillColor = COR_ENTRADAS
-    g.bars[1].fillColor = COR_SAIDAS
-    g.bars.strokeColor = None
-    g.barSpacing = 1.5
-    g.groupSpacing = 7
-    d.add(g)
-    # Legenda (cor + nome)
-    for i, (nome, cor) in enumerate([("Entradas", COR_ENTRADAS), ("Saídas", COR_SAIDAS)]):
-        x = 44 + i * 80
-        d.add(Rect(x, altura + 8, 9, 9, fillColor=cor, strokeColor=None))
-        d.add(String(x + 13, altura + 9, nome, fontName="Helvetica", fontSize=8,
-                     fillColor=MARINHO))
+# Cores das linhas (validadas para contraste e daltonismo; mesma ordem do app)
+CORES_SERIES = [colors.HexColor(c) for c in ("#3987e5", "#d95926", "#199e70", "#c98500",
+                                             "#d55181", "#008300", "#9085e9", "#e66767")]
+COR_TOTAL = colors.HexColor("#8c8c8c")
+
+
+def _compacto(v):
+    """Valor curto para rótulo de ponto: 850 / 7,3 mil / 12 mil."""
+    if abs(v) >= 10000:
+        return f"{v / 1000:.0f} mil"
+    if abs(v) >= 1000:
+        return f"{v / 1000:.1f} mil".replace(".", ",")
+    return f"{v:.0f}"
+
+
+def _topo(maximo):
+    """Topo "redondo" do eixo com 4 faixas (passos redondos × 10ⁿ), com folga."""
+    if maximo <= 0:
+        return 1.0
+    alvo = maximo * 1.12
+    base = 10 ** int(f"{alvo / 4:e}".split("e")[1])
+    for m in (1, 1.5, 2, 2.5, 3, 4, 5, 6, 7.5, 10):
+        if base * m * 4 >= alvo:
+            return base * m * 4
+    return alvo
+
+
+def _afastar(posicoes, distancia, minimo, maximo):
+    """Afasta rótulos (dict nome -> y) para não se sobreporem, dentro de [minimo, maximo]."""
+    ordem = sorted(posicoes, key=posicoes.get)
+    for a, b in zip(ordem, ordem[1:]):
+        posicoes[b] = max(posicoes[b], posicoes[a] + distancia)
+    if ordem and posicoes[ordem[-1]] > maximo:
+        posicoes[ordem[-1]] = maximo
+        for a, b in zip(reversed(ordem), list(reversed(ordem))[1:]):
+            posicoes[b] = min(posicoes[b], posicoes[a] - distancia)
+    for k in posicoes:
+        posicoes[k] = max(posicoes[k], minimo)
+    return posicoes
+
+
+def _grafico_linhas(series, meses, altura=170, valores="todos", largura_nomes=118):
+    """Gráfico de linhas: uma linha por série, o nome no fim da linha.
+
+    series: lista de (nome, cor, {mês: valor}, total?) na ordem do maior para o menor.
+    valores="todos" escreve o valor em cada ponto; "fim" escreve só no fim, junto do nome.
+    """
+    from reportlab.graphics.shapes import Circle, Line, PolyLine
+    esq, base, topo_px = 34, 16, altura - 8
+    dir_ = LARGURA - largura_nomes
+    d = Drawing(LARGURA, altura)
+    maximo = max((v for _, _, pts, *_ in series for v in pts.values()), default=0)
+    topo = _topo(maximo)
+    passo_x = (dir_ - esq - 16) / max(1, len(meses) - 1)
+    xs = {m: esq + 8 + i * passo_x for i, m in enumerate(meses)}
+
+    def y(v):
+        return base + (topo_px - base) * v / topo
+
+    # Grade e eixos (discretos)
+    for k in range(5):
+        v = topo * k / 4
+        d.add(Line(esq, y(v), dir_, y(v), strokeColor=colors.HexColor("#ebe6da"),
+                   strokeWidth=0.5))
+        d.add(String(esq - 4, y(v) - 2.5, f"{v:,.0f}".replace(",", "."), fontName="Helvetica",
+                     fontSize=6.5, fillColor=CINZA, textAnchor="end"))
+    for m, x in xs.items():
+        d.add(String(x, base - 11, rotulo_mes(m), fontName="Helvetica", fontSize=6.5,
+                     fillColor=CINZA, textAnchor="middle"))
+
+    rotulos_ponto = {m: {} for m in meses}
+    fins = {}
+    for nome, cor, pts, *extra in series:
+        total = bool(extra and extra[0])
+        ms = [m for m in meses if m in pts]
+        if not ms:
+            continue
+        coords = []
+        for m in ms:
+            coords += [xs[m], y(pts[m])]
+        if len(ms) > 1:
+            d.add(PolyLine(coords, strokeColor=cor, strokeWidth=2 if total else 1.6,
+                           strokeDashArray=[4, 3] if total else None))
+        for m in ms:
+            d.add(Circle(xs[m], y(pts[m]), 2.3, fillColor=cor, strokeColor=colors.white,
+                         strokeWidth=0.6))
+            if valores == "todos":
+                rotulos_ponto[m][nome] = (y(pts[m]), pts[m])
+        fins.setdefault(ms[-1], {})[nome] = (y(pts[ms[-1]]), pts[ms[-1]], total)
+
+    # Valor em cada ponto: o da linha mais baixa vai embaixo do ponto, os outros em cima,
+    # afastados para não se sobreporem
+    for m, rot in rotulos_ponto.items():
+        if not rot:
+            continue
+        baixo = min(rot, key=lambda k: rot[k][0]) if len(rot) > 1 else None
+        if baixo is not None:
+            d.add(String(xs[m], max(base + 1, rot[baixo][0] - 10), _compacto(rot[baixo][1]),
+                         fontName="Helvetica", fontSize=6, fillColor=MARINHO,
+                         textAnchor="middle"))
+        pos = _afastar({k: v[0] + 5 for k, v in rot.items() if k != baixo}, 8, base + 2,
+                       altura - 4)
+        for k, yy in pos.items():
+            d.add(String(xs[m], yy, _compacto(rot[k][1]), fontName="Helvetica", fontSize=6,
+                         fillColor=MARINHO, textAnchor="middle"))
+    # Nome no fim de cada linha
+    for m, grupo in fins.items():
+        pos = _afastar({k: v[0] - 2.5 for k, v in grupo.items()}, 9, base - 2, altura - 6)
+        for k, yy in pos.items():
+            texto = k if valores == "todos" else f"{k}  {formatar_reais(grupo[k][1])}"
+            limite = 34 if m == meses[-1] else 26
+            texto = texto if len(texto) <= limite else texto[:limite - 1] + "…"
+            d.add(String(xs[m] + 6, yy, texto, fontSize=7, fillColor=MARINHO,
+                         fontName="Helvetica-Bold" if grupo[k][2] else "Helvetica"))
     return d
+
+
+def _series_de(longo, max_series=6, nome_total="Total"):
+    """(nome, cor, {mês: valor}) por série a partir de Mês/Fornecedor/Valor, mais o total."""
+    ordem = longo.groupby("Fornecedor")["Valor"].sum().sort_values(ascending=False).index
+    if len(ordem) > max_series:
+        resto = set(ordem[max_series:])
+        longo = longo.assign(Fornecedor=longo["Fornecedor"].where(
+            ~longo["Fornecedor"].isin(resto), f"Outros ({len(resto)})"))
+        ordem = list(ordem[:max_series]) + [f"Outros ({len(resto)})"]
+    por = longo.groupby(["Fornecedor", "Mês"])["Valor"].sum()
+    total = longo.groupby("Mês")["Valor"].sum().to_dict()
+    series = [(nome_total, COR_TOTAL, total, True)]
+    series += [(n, CORES_SERIES[i % len(CORES_SERIES)], por[n].to_dict())
+               for i, n in enumerate(ordem)]
+    return series, sorted(longo["Mês"].unique())
 
 
 def _barra_pct(pct, largura=60, cor=COR_SAIDAS):
@@ -365,104 +531,113 @@ def _pagina1(dados, e):
     h = [Paragraph("Seu dinheiro em uma página", e["titulo"]), _nota_geral(dados, e),
          Spacer(1, 8), _cartoes_kpi(dados, e), Spacer(1, 4),
          Paragraph(f"Média por mês: entrou {formatar_reais(dados['media_entradas'])} e saiu "
-                   f"{formatar_reais(dados['media_saidas'])}, em {dados['n_meses']} mês(es).",
-                   e["pequeno"]),
+                   f"{formatar_reais(dados['media_saidas'])}, em {dados['n_meses']} mês(es). "
+                   "O que entrou inclui tudo o que chegou às contas (salário, pagamentos, "
+                   "transferências de outras pessoas e reembolsos).", e["pequeno"]),
          Paragraph("Destaques", e["sub"])]
     h += [Paragraph(f, e["item"], bulletText="•") for f in dados["destaques"]]
-    h += [Paragraph("Entradas e saídas mês a mês", e["sub"]), _grafico_mensal(dados["mensal"])]
-    linhas = [[Paragraph(x, e["cel_cab_dir"] if i else e["cel_cab"])
-               for i, x in enumerate(["Mês", "Entrou", "Saiu", "Saldo"])]]
-    for _, m in dados["mensal"].iterrows():
-        cor = SINAL[plus.BOM][0] if m["Saldo"] >= 0 else SINAL[plus.ALERTA][0]
-        linhas.append([Paragraph(rotulo_mes(m["Mês"]), e["cel"]),
-                       Paragraph(formatar_reais(m["Entradas"]), e["cel_dir"]),
-                       Paragraph(formatar_reais(m["Saídas"]), e["cel_dir"]),
-                       Paragraph(f'<font color="{cor.hexval()}">{formatar_reais(m["Saldo"])}'
-                                 "</font>", e["cel_dir"])])
-    h.append(_tabela(linhas, [LARGURA * .22] + [LARGURA * .26] * 3))
+    mensal = dados["mensal"]
+    h += [Paragraph("Entrou e saiu, mês a mês", e["sub"]),
+          _grafico_linhas([("Entrou", COR_ENTRADAS, dict(zip(mensal["Mês"], mensal["Entradas"]))),
+                           ("Saiu", COR_SAIDAS, dict(zip(mensal["Mês"], mensal["Saídas"])))],
+                          list(mensal["Mês"]), altura=300, largura_nomes=60)]
     return h
 
 
 def _pagina2(dados, e):
+    recuo = {0: 4, 1: 16, 2: 30}
+
+    def nome(texto, nivel, estilo="cel"):
+        st = ParagraphStyle(f"n{nivel}{estilo}", parent=e[estilo], leftIndent=recuo[nivel])
+        return Paragraph(texto, st)
+
     h = [Paragraph("Para onde foi o dinheiro", e["titulo"]),
-         Paragraph("As 5 maiores categorias de gasto. A variação compara a média dos últimos "
-                   "3 meses com a dos meses anteriores.", e["pequeno"]), Spacer(1, 4)]
-    cats = dados["categorias"]
+         Paragraph("As 5 maiores categorias de gasto, com as subcategorias e os maiores gastos "
+                   "de cada uma. Na linha da categoria, o % é sobre todas as saídas; nas linhas "
+                   "de baixo, a categoria é o 100%. A variação compara a média dos últimos 3 "
+                   "meses com a dos meses anteriores.", e["pequeno"]), Spacer(1, 5)]
     linhas = [[Paragraph(x, e["cel_cab_dir"] if i in (1, 3) else e["cel_cab"])
-               for i, x in enumerate(["Categoria", "Total", "% das saídas", "Variação"])]]
-    for _, c in cats.head(5).iterrows():
-        v = dados["var_cat"].get(c["Categoria"])
+               for i, x in enumerate(["Categoria", "Total", "%", "Variação"])]]
+    estilo_extra, n = [], 1
+    for b in dados["onde_foi"]:
+        v = b["var"]
         var = "—" if v is None else (("+" if v > 0 else "") + _pct(v))
-        linhas.append([Paragraph(c["Categoria"].capitalize(), e["cel"]),
-                       Paragraph(formatar_reais(c["Total"]), e["cel_dir"]),
-                       Table([[_barra_pct(c["% das saídas"]),
-                               Paragraph(_pct(c["% das saídas"], 1), e["cel"])]],
-                             colWidths=[64, 40], style=[("LEFTPADDING", (0, 0), (-1, -1), 0)]),
+        linhas.append([nome(f"<b>{b['categoria'].capitalize()}</b>", 0),
+                       Paragraph(f"<b>{formatar_reais(b['total'])}</b>", e["cel_dir"]),
+                       _pct_celula(b["pct"], e, COR_SAIDAS),
                        Paragraph(var, e["cel_dir"])])
-    resto = cats.iloc[5:]
-    if not resto.empty:
-        linhas.append([Paragraph(f"<i>Demais ({len(resto)})</i>", e["cel"]),
-                       Paragraph(formatar_reais(resto["Total"].sum()), e["cel_dir"]),
-                       Paragraph(_pct(resto["% das saídas"].sum(), 1), e["cel"]),
-                       Paragraph("", e["cel"])])
-    h.append(_tabela(linhas, [LARGURA * .34, LARGURA * .2, LARGURA * .3, LARGURA * .16]))
-
-    h.append(Paragraph("Quem mais recebeu", e["sub"]))
-    linhas = [[Paragraph(x, e["cel_cab_dir"] if i >= 2 else e["cel_cab"])
-               for i, x in enumerate(["Fornecedor", "Categoria", "Vezes", "Total"])]]
-    for _, f in dados["fornecedores"].iterrows():
-        linhas.append([Paragraph(f["Fornecedor"], e["cel"]),
-                       Paragraph(f["Categoria"].capitalize(), e["cel"]),
-                       Paragraph(str(f["Vezes"]), e["cel_dir"]),
-                       Paragraph(formatar_reais(f["Total"]), e["cel_dir"])])
-    h.append(_tabela(linhas, [LARGURA * .42, LARGURA * .26, LARGURA * .12, LARGURA * .2]))
-
-    h.append(Paragraph("Já comprometido nos próximos 3 meses", e["sub"]))
-    h.append(Paragraph("Contas que se repetem todo mês (valor fixo e contas mensais) e parcelas "
-                       "do cartão que já estão contratadas.", e["pequeno"]))
-    h.append(Spacer(1, 4))
-    linhas = [[Paragraph(x, e["cel_cab_dir"] if i else e["cel_cab"])
-               for i, x in enumerate(["Mês", "Contas fixas", "Parcelas", "Total"])]]
-    for c in dados["comprometido"]:
-        linhas.append([Paragraph(rotulo_mes(c["Mês"]), e["cel"]),
-                       Paragraph(formatar_reais(c["Contas fixas"]), e["cel_dir"]),
-                       Paragraph(formatar_reais(c["Parcelas"]), e["cel_dir"]),
-                       Paragraph(f"<b>{formatar_reais(c['Contas fixas'] + c['Parcelas'])}</b>",
-                                 e["cel_dir"])])
-    h.append(_tabela(linhas, [LARGURA * .22] + [LARGURA * .26] * 3))
-
-    rec = dados["recorrentes"]
-    fixos = rec[(rec["Situação"] == "Ativo") & rec["Tipo"].isin([plus.FIXO, plus.CONTA_MENSAL])]
-    if not fixos.empty:
-        h.append(Paragraph("Contas que se repetem", e["sub"]))
-        linhas = [[Paragraph(x, e["cel_cab_dir"] if i == 2 else e["cel_cab"])
-                   for i, x in enumerate(["Conta", "Tipo", "Por mês", "Próxima"])]]
-        for _, r in fixos.head(6).iterrows():
-            linhas.append([Paragraph(r["Fornecedor"], e["cel"]),
-                           Paragraph("Valor fixo" if r["Tipo"] == plus.FIXO else "Valor varia",
-                                     e["cel"]),
-                           Paragraph(formatar_reais(r["Por mês"]), e["cel_dir"]),
-                           Paragraph(r["Próxima prevista"], e["cel"])])
-        h.append(_tabela(linhas, [LARGURA * .42, LARGURA * .2, LARGURA * .18, LARGURA * .2]))
-
-    par = dados["parcelas"]
-    if not par.empty:
-        h.append(Paragraph("Parcelas do cartão", e["sub"]))
-        linhas = [[Paragraph(x, e["cel_cab_dir"] if i in (1, 3) else e["cel_cab"])
-                   for i, x in enumerate(["Compra", "Parcela", "Faltam", "Ainda a pagar",
-                                          "Termina"])]]
-        for _, p in par.head(4).iterrows():
-            linhas.append([Paragraph(p["Fornecedor"], e["cel"]),
-                           Paragraph(formatar_reais(p["Valor da parcela"]), e["cel_dir"]),
-                           Paragraph(f"{p['Restam']} de {p['Parcelas']}", e["cel"]),
-                           Paragraph(formatar_reais(p["Total restante"]), e["cel_dir"]),
-                           Paragraph(rotulo_mes(p["Última parcela"]), e["cel"])])
-        h.append(_tabela(linhas, [LARGURA * .36, LARGURA * .16, LARGURA * .14, LARGURA * .18,
-                                  LARGURA * .16]))
+        estilo_extra += [("BACKGROUND", (0, n), (-1, n), OSSO),
+                         ("LINEABOVE", (0, n), (-1, n), 0.6, LINHA)]
+        n += 1
+        for sb in b["subs"]:
+            linhas.append([nome(sb["nome"], 1), Paragraph(formatar_reais(sb["total"]),
+                                                          e["cel_dir"]),
+                           _pct_celula(sb["pct"], e, COR_ENTRADAS), Paragraph("", e["cel"])])
+            n += 1
+        if b["maiores"]:
+            linhas.append([nome("<i>Maiores gastos</i>", 1, "cel_cab"), Paragraph("", e["cel"]),
+                           Paragraph("", e["cel"]), Paragraph("", e["cel"])])
+            n += 1
+            for f in b["maiores"]:
+                vezes = f"{f['vezes']} vez" + ("es" if f["vezes"] > 1 else "")
+                linhas.append([nome(f"{f['nome']} <font color='#5b6275'>· {vezes}</font>", 2),
+                               Paragraph(formatar_reais(f["total"]), e["cel_dir"]),
+                               _pct_celula(f["pct"], e, COR_TOTAL), Paragraph("", e["cel"])])
+                n += 1
+    if dados["demais"]:
+        dm = dados["demais"]
+        linhas.append([nome(f"<i>Demais categorias ({dm['n']})</i>", 0),
+                       Paragraph(formatar_reais(dm["total"]), e["cel_dir"]),
+                       _pct_celula(dm["pct"], e, COR_SAIDAS), Paragraph("", e["cel"])])
+    tab = _tabela(linhas, [LARGURA * .44, LARGURA * .18, LARGURA * .26, LARGURA * .12],
+                  zebra=False)
+    tab.setStyle(TableStyle(estilo_extra + [("TOPPADDING", (0, 1), (-1, -1), 2),
+                                            ("BOTTOMPADDING", (0, 1), (-1, -1), 2)]))
+    h.append(tab)
     return h
 
 
-def _pagina3(dados, e):
+def _pct_celula(pct, e, cor):
+    return Table([[_barra_pct(pct, 56, cor), Paragraph(_pct(pct, 1), e["cel"])]],
+                 colWidths=[60, 40], style=[("LEFTPADDING", (0, 0), (-1, -1), 0),
+                                            ("TOPPADDING", (0, 0), (-1, -1), 0),
+                                            ("BOTTOMPADDING", (0, 0), (-1, -1), 0)])
+
+
+def _pagina_compromissos(dados, e):
+    h = [Paragraph("O que já está comprometido", e["titulo"])]
+    comp = dados["comprometido"]
+    meses = [c["Mês"] for c in comp]
+    h += [Paragraph("Nos próximos 3 meses", e["sub"]),
+          Paragraph("Contas que se repetem todo mês (valor fixo e contas mensais) e parcelas "
+                    "do cartão já contratadas.", e["pequeno"]),
+          _grafico_linhas([
+              ("Total", COR_TOTAL, {c["Mês"]: c["Contas fixas"] + c["Parcelas"] for c in comp},
+               True),
+              ("Contas fixas", CORES_SERIES[0], {c["Mês"]: c["Contas fixas"] for c in comp}),
+              ("Parcelas", CORES_SERIES[1], {c["Mês"]: c["Parcelas"] for c in comp})],
+              meses, altura=150, largura_nomes=90)]
+    hist = dados["hist_fixos"]
+    if not hist.empty:
+        series, meses = _series_de(hist, nome_total="Total por mês")
+        h += [Paragraph("Contas que se repetem", e["sub"]),
+              Paragraph("Quanto cada conta custou em cada mês. No fim da linha, o valor do "
+                        "último mês.", e["pequeno"]),
+              _grafico_linhas(series, meses, altura=190, valores="fim", largura_nomes=150)]
+    par = dados["serie_parcelas"]
+    if not par.empty:
+        series, meses = _series_de(par, nome_total="Total das parcelas")
+        fim = {p["Fornecedor"]: p for _, p in dados["parcelas"].iterrows()}
+        h += [Paragraph("Parcelas do cartão", e["sub"]),
+              Paragraph("Quanto ainda vai sair em cada mês até a última parcela: " + "; ".join(
+                  f"{n} ({fim[n]['Restam']} de {fim[n]['Parcelas']} restantes, "
+                  f"{formatar_reais(fim[n]['Total restante'])})"
+                  for n, *_ in series[1:] if n in fim) + ".", e["pequeno"]),
+              _grafico_linhas(series, meses, altura=150, largura_nomes=110)]
+    return h
+
+
+def _pagina_atencao(dados, e):
     h = [Paragraph("Pontos de atenção", e["titulo"])]
     linhas = []
     for i in dados["indicadores"]:
@@ -509,8 +684,11 @@ def _pagina3(dados, e):
                            "IR do app.", e["pequeno"]))
 
     if dados["sugestoes"]:
+        h.append(Spacer(1, 10))
         h.append(Paragraph("Próximos passos sugeridos", e["sub"]))
-        h += [Paragraph(s, e["item"], bulletText=f"{n}.")
+        passo = ParagraphStyle("passo", parent=e["item"], leftIndent=26, bulletIndent=12,
+                               spaceAfter=5)
+        h += [Paragraph(s, passo, bulletText=f"{n}.")
               for n, s in enumerate(dados["sugestoes"], start=1)]
 
     contas = ", ".join(dados["contas"])
@@ -551,7 +729,7 @@ def gerar_pdf(dados):
                             title="Relatório Contas em Dia", author="Contas em Dia")
     e = _estilos()
     historia = (_pagina1(dados, e) + [PageBreak()] + _pagina2(dados, e) + [PageBreak()]
-                + _pagina3(dados, e))
+                + _pagina_compromissos(dados, e) + [PageBreak()] + _pagina_atencao(dados, e))
     desenhar = _cabecalho_rodape(dados)
     doc.build(historia, onFirstPage=desenhar, onLaterPages=desenhar)
     return saida.getvalue()
