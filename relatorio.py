@@ -118,7 +118,7 @@ def _destaques(t, mensal, variacao, comprometido_mes, media_saidas):
     return frases[:3]
 
 
-def _onde_foi(t, cats, var_cat, n_categorias=5, n_subs=4, n_maiores=3):
+def _onde_foi(t, cats, var_cat, n_categorias=5, n_subs=3, n_maiores=3):
     """Maiores categorias, com subcategorias e maiores gastos (% sobre a categoria)."""
     s = t[t["Tipo"] == "Saída"].assign(V=lambda d: -d["Valor"])
     blocos = []
@@ -591,8 +591,8 @@ def _pagina2(dados, e):
                        _pct_celula(dm["pct"], e, COR_SAIDAS), Paragraph("", e["cel"])])
     tab = _tabela(linhas, [LARGURA * .44, LARGURA * .18, LARGURA * .26, LARGURA * .12],
                   zebra=False)
-    tab.setStyle(TableStyle(estilo_extra + [("TOPPADDING", (0, 1), (-1, -1), 2),
-                                            ("BOTTOMPADDING", (0, 1), (-1, -1), 2)]))
+    tab.setStyle(TableStyle(estilo_extra + [("TOPPADDING", (0, 1), (-1, -1), 1.4),
+                                            ("BOTTOMPADDING", (0, 1), (-1, -1), 1.4)]))
     h.append(tab)
     return h
 

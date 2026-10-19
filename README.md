@@ -62,17 +62,21 @@ O app abrirá em `http://localhost:8501`
 
 Para rodar os testes: `pip install pytest` e depois `pytest`
 ⭐ Área Plus
-A área Plus abre com um código de acesso. No Streamlit Cloud: app → Settings → Secrets:
+A área Plus abre com um código de acesso assinado, com validade e vinculado ao titular.
+No Streamlit Cloud: app → Settings → Secrets:
 ```
-PLUS_CODIGOS = ["codigo-1", "codigo-2"]    # ou "codigo-1, codigo-2"
-PLUS_LINK = "https://..."                 # opcional: link de pagamento ("Quero o Plus")
-CONTATO_CONSULTORIA = "https://wa.me/..." # opcional: botão "Falar com um especialista"
+PLUS_CHAVE = "..."          # chave que assina os códigos (a página de administração sugere uma)
+ADMIN_SENHA = "..."         # senha da página de administração
+PLUS_LINK = "https://..."   # link de pagamento ("Assinar área Plus")
+CONTATO_CONSULTORIA = "https://wa.me/..."   # opcional: botão "Falar com um especialista"
+PLUS_BLOQUEADOS = ""        # opcional: códigos cancelados (as 4 letras do meio, por vírgula)
+PLUS_CODIGOS = ["teste"]    # opcional: códigos fixos, sem validade (testes e cortesias)
 ```
-Os botões "⭐ Assinar área Plus" e "Falar com um especialista" ficam sempre no canto inferior
-direito. Sem `PLUS_LINK`, o "Assinar" abre o WhatsApp de `CONTATO_CONSULTORIA` com a mensagem
-pronta; sem nenhum dos dois, os botões não aparecem.
-Para tirar o acesso de alguém, apague o código dele da lista. Sem `PLUS_CODIGOS`, a área
-fica fechada para todos e só a vitrine aparece.
+**Venda:** a pessoa paga pelo link; quando o pagamento cai, abra o app com `?admin=1` no fim
+do endereço, entre com a senha, informe o nome completo do titular e a validade, e envie o
+código gerado. O app não guarda nada: confere a assinatura, a validade e o nome na hora.
+O código só funciona com o nome do titular, e o Plus é bloqueado quando um extrato em PDF
+mostra outro titular. Não troque a `PLUS_CHAVE` depois de vender: os códigos deixariam de valer.
 
 🏷️ Regras compartilhadas (o app lembra)
 Na aba "⭐ Classificar" você corrige a categoria de um fornecedor e o app passa a usar essa
