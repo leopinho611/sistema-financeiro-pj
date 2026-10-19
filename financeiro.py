@@ -51,7 +51,7 @@ CATEGORIAS = {
     "SHOPPING": ["roupa", "sapato", "loja", "lojas", "vestuario", "shopping", "magazine",
                  "amazon*", "mercadolivre", "mercado livre", "shopee", "shein",
                  "renner", "riachuelo", "baby"],
-    "IMPOSTOS E TAXAS": ["irpf", "irpj", "icms", "pis", "cofins", "iss", "inss", "darf",
+    "IMPOSTOS E TAXAS": ["irpf", "irpj", "i r parcelam*", "icms", "pis", "cofins", "iss", "inss", "darf",
                          "gps", "csll", "simples nacional", "gru", "pref mun",
                          "prefeitura", "receita federal", "rfb", "iptu",
                          "conselho regional"],
@@ -81,7 +81,9 @@ CATEGORIAS_INTERNAS = {CATEGORIA_APLICACAO, CATEGORIA_FATURA, CATEGORIA_ENTRE_CO
 
 PALAVRAS_APLICACAO = ["rende facil", "rdb", "nu reserva", "valor mensal programado",
                       "caixinha", "poupanca", "aplicacao", "resgate", "fii", "acao",
-                      "acoes", "tesouro", "cdb", "lci", "lca", "corretora", "bitcoin"]
+                      "acoes", "tesouro", "cdb", "lci", "lca", "corretora", "bitcoin",
+                      "conta investimento", "sicredinvest", "capital subscrito",
+                      "integralizacao de capital"]
 PALAVRAS_FATURA = ["pagto cartao", "pagamento de fatura", "pagamento fatura",
                    "pgto fatura", "fatura do cartao", "fatura cartao"]
 PADRAO_TRANSFERENCIA = re.compile(r"\b(?:pix|ted|doc|transf|transferencia)")
@@ -479,7 +481,8 @@ SUBCATEGORIAS = {
                                "futebol", "clube", "parque"],
     },
     "IMPOSTOS E TAXAS": {
-        "Federais": ["darf", "gru", "receita federal", "rfb", "irpf", "irpj", "inss",
+        "Federais": ["darf", "gru", "receita federal", "rfb", "irpf", "irpj", "i r parcelam*",
+                     "inss",
                      "simples nacional", "gps", "csll", "cofins", "pis"],
         "Estaduais": ["icms", "sefaz"],
         "Municipais": ["pref mun", "prefeitura", "iptu", "iss", "pmsp"],
@@ -502,7 +505,8 @@ SUBCATEGORIA_OUTROS = "Outros"
 # Tipos de entrada reconhecidos pelas palavras; o resto é separado por quem pagou
 TIPOS_ENTRADA = {
     "Salário": ["salario", "folha", "proventos", "pro labore", "prolabore", "vencimentos"],
-    "Rendimentos": ["rendimento*", "dividendo*", "juros sobre capital", "jcp", "cupom"],
+    "Rendimentos": ["rendimento*", "dividendo*", "juros sobre capital", "jcp", "cupom",
+                    "distribuicao resultados", "distribuicao de sobras"],
     "Estornos e reembolsos": ["estorno*", "reembolso*", "devolucao", "cashback"],
 }
 _PADROES_ENTRADA = {}
@@ -725,7 +729,7 @@ def eh_empresa(descricoes, contas):
 # Partes da descrição que dizem o tipo do lançamento, não quem recebeu
 _PARTES_GENERICAS = ("transferencia", "pix", "ted", "doc", "pagamento", "pagto", "pgto",
                      "compra", "debito", "credito", "recebid", "enviad", "tarifa",
-                     "cobranca", "boleto")
+                     "cobranca", "boleto", "recebimento", "liquidacao")
 # Prefixos de maquininha/intermediador: "MP*LOJA", "PG *LOJA", "DL*99 RIDE"
 _PREFIXO_INTERMEDIADOR = re.compile(r"^[A-Z0-9]{1,4}\s?\*\s*", re.IGNORECASE)
 
@@ -1052,6 +1056,127 @@ def ler_extrato_nubank_pdf(texto):
 
 
 # ============================================================================
+# EXTRATOS EM PDF: SICREDI E BANCO XP
+# ============================================================================
+_DATA_SICREDI = re.compile(r"^\d{2}/\d{2}/\d{4}$")
+_VALOR_SICREDI = re.compile(r"^([-+])\s*R\$\s*([\d.]+,\d{2})$")
+_SALDO_SICREDI = re.compile(r"^R\$\s*-?[\d.]+,\d{2}$")
+
+
+def eh_extrato_sicredi(texto):
+    return "sicredi" in texto.lower() and "Extrato de conta corrente" in texto
+
+
+def titular_sicredi(texto):
+    """Nome do titular, que vem antes do CPF ("MARIA SILVA" / "-" / "000.000.000-00")."""
+    m = re.search(r"^([^\d\n]{5,}?)\s*\n\s*-\s*\n\s*\d{3}\.\d{3}\.\d{3}-\d{2}", texto,
+                  re.MULTILINE)
+    return _apresentar(m.group(1).strip()) if m else ""
+
+
+def ler_extrato_sicredi_pdf(texto):
+    """Lançamentos do extrato de conta corrente Sicredi em PDF.
+
+    Cada lançamento vem em linhas separadas: data, descrição (às vezes em mais de uma
+    linha) e valor com sinal ("- R$ 28,31"). "Saldo do dia" e o cabeçalho que se repete
+    em cada página ("Movimentações de ... Data Descrição Valor") são ignorados.
+    """
+    linhas = [l.strip() for l in texto.splitlines()]
+    try:
+        inicio = next(i for i, l in enumerate(linhas) if l == "Saldo Anterior") + 2
+    except StopIteration:
+        raise ValueError("extrato Sicredi sem a lista de movimentações.")
+    lancamentos, data, buffer = [], None, []
+    cabecalho = saldo = False
+    for l in linhas[inicio:]:
+        if l.startswith(("Cheque especial", "Fim desse extrato")):
+            break
+        if l.startswith("Movimentações"):
+            cabecalho = True
+        if cabecalho:
+            cabecalho = l != "Valor"
+            continue
+        if l.startswith("Saldo do dia"):
+            saldo = True
+            continue
+        if saldo:
+            saldo = not _SALDO_SICREDI.match(l)   # pula a data e o saldo do dia
+            continue
+        if not l:
+            continue
+        if _DATA_SICREDI.match(l):
+            data, buffer = pd.to_datetime(l, format="%d/%m/%Y"), []
+            continue
+        v = _VALOR_SICREDI.match(l)
+        if v and data is not None and buffer:
+            valor = converter_valor(v.group(2)) * (-1 if v.group(1) == "-" else 1)
+            lancamentos.append({"Data": data.strftime("%Y-%m-%d"),
+                                "Descrição": " ".join(buffer), "Valor": valor})
+            buffer = []
+        elif not v:
+            buffer.append(l)   # descrição quebrada em mais de uma linha
+    if not lancamentos:
+        raise ValueError("nenhum lançamento encontrado no extrato Sicredi.")
+    for x in lancamentos:
+        d = re.sub(r"\s+", " ", x["Descrição"]).strip()
+        # "PAGAMENTO PIX - 12345678000190 PADARIA" -> "PAGAMENTO PIX - PADARIA - 1234...":
+        # o nome antes do CPF/CNPJ, como nos outros bancos (o que vem depois é descartado
+        # na hora de categorizar)
+        x["Descrição"] = re.sub(r"^(.*? - )(\d{11}|\d{14}) (.+)$", r"\1\3 - \2", d)
+    bruto = pd.DataFrame(lancamentos)
+    return montar_transacoes(bruto, {"data": "Data", "descricao": ["Descrição"],
+                                     "valor": "Valor"}, "Sicredi")
+
+
+_LINHA_XP = re.compile(r"^(\d{2}/\d{2}/\d{2}) às \d{2}:\d{2}:\d{2} (.*?) (-?R\$ [\d.]+,\d{2}) "
+                       r"(-?R\$ [\d.]+,\d{2})$")
+_INICIO_XP = re.compile(r"^\d{2}/\d{2}/\d{2} às \d{2}:\d{2}:\d{2} ")
+# "Pix enviado para FULANO" -> "Pix enviado - FULANO" (o nome vira o fornecedor)
+_PREFIXO_XP = re.compile(r"^(Pix enviado|Pagamento|Transferência enviada) para\s+"
+                         r"|^(Pix recebido|Transferência recebida) de\s+", re.IGNORECASE)
+
+
+def eh_extrato_xp(texto):
+    return "Conta Digital XP" in texto or ("Banco XP" in texto and "Conta Digital" in texto)
+
+
+def titular_xp(texto):
+    m = re.search(r"^(.+?)\s+Banco XP S\.A", texto, re.MULTILINE)
+    return _apresentar(m.group(1).strip()) if m else ""
+
+
+def ler_extrato_xp_pdf(texto):
+    """Lançamentos do extrato da Conta Digital XP em PDF.
+
+    Cada linha: "30/09/26 às 10:03:12 Descrição -R$ 1.519,12 R$ 2.115,67" (valor e saldo).
+    Descrições longas continuam na linha de baixo, até chegar o valor.
+    """
+    lancamentos, pendente = [], ""
+    for l in (x.strip() for x in texto.splitlines()):
+        if l.startswith("Extrato simples para conferência"):
+            break
+        if _INICIO_XP.match(l):
+            pendente = l
+        elif pendente:
+            pendente += " " + l
+        else:
+            continue
+        m = _LINHA_XP.match(pendente)
+        if m:
+            desc = _PREFIXO_XP.sub(lambda g: f"{g.group(1) or g.group(2)} - ",
+                                   m.group(2).strip())
+            lancamentos.append({"Data": pd.to_datetime(m.group(1), format="%d/%m/%y")
+                                .strftime("%Y-%m-%d"), "Descrição": desc,
+                                "Valor": converter_valor(m.group(3).replace("R$", "").strip())})
+            pendente = ""
+    if not lancamentos:
+        raise ValueError("nenhum lançamento encontrado no extrato XP.")
+    bruto = pd.DataFrame(lancamentos)
+    return montar_transacoes(bruto, {"data": "Data", "descricao": ["Descrição"],
+                                     "valor": "Valor"}, "XP")
+
+
+# ============================================================================
 # CARREGAMENTO DE VÁRIOS ARQUIVOS
 # ============================================================================
 def identificar_conta(nome, colunas=()):
@@ -1099,7 +1224,8 @@ def carregar_arquivo(nome, conteudo):
 
     Retorna {"tipo": "tabela", "bruto": DataFrame, "conta": str} para extratos
     em CSV/Excel (as colunas ainda precisam ser identificadas) ou
-    {"tipo": "transacoes", "dados": DataFrame, "conta": str} para faturas em PDF.
+    {"tipo": "transacoes", "dados": DataFrame, "conta": str} para OFX e PDF (nos PDFs que
+    trazem o nome do titular, também "titular").
     """
     ext = nome.lower().rsplit(".", 1)[-1]
     if ext == "ofx" or conteudo.lstrip()[:9] == b"OFXHEADER" or b"<OFX>" in conteudo[:2000]:
@@ -1110,11 +1236,17 @@ def carregar_arquivo(nome, conteudo):
         texto = "\n".join(p.extract_text() or "" for p in PdfReader(io.BytesIO(conteudo)).pages)
         if eh_fatura_bb(texto):
             return {"tipo": "transacoes", "dados": ler_fatura_bb(texto), "conta": "BB Cartão"}
+        if eh_extrato_sicredi(texto):
+            return {"tipo": "transacoes", "dados": ler_extrato_sicredi_pdf(texto),
+                    "conta": "Sicredi", "titular": titular_sicredi(texto)}
+        if eh_extrato_xp(texto):
+            return {"tipo": "transacoes", "dados": ler_extrato_xp_pdf(texto), "conta": "XP",
+                    "titular": titular_xp(texto)}
         if eh_extrato_nubank(texto):
             return {"tipo": "transacoes", "dados": ler_extrato_nubank_pdf(texto),
                     "conta": "Nubank"}
-        raise ValueError("PDF não reconhecido (são lidos a fatura do cartão BB e o extrato da "
-                         "conta Nubank); envie o extrato em CSV, Excel ou OFX.")
+        raise ValueError("PDF não reconhecido (são lidos a fatura do cartão BB e os extratos "
+                         "Nubank, Sicredi e XP); envie o extrato em CSV, Excel ou OFX.")
     bruto = ler_extrato(nome, conteudo)
     return {"tipo": "tabela", "bruto": bruto, "conta": identificar_conta(nome, bruto.columns)}
 

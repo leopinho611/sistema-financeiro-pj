@@ -549,7 +549,7 @@ with st.sidebar:
         type=TIPOS_EXTRATO,
         accept_multiple_files=True,
         help="Extratos em CSV, Excel ou OFX de qualquer banco, de vários meses e contas. "
-             "Em PDF: extrato da conta Nubank e fatura do cartão BB. Pode mandar o mesmo "
+             "Em PDF: extratos Nubank, Sicredi e XP, e fatura do cartão BB. Pode mandar o mesmo "
              "mês em mais de um formato: as repetições são descartadas. Pode mandar "
              "uma pasta compactada (.zip)."
     )
@@ -680,8 +680,8 @@ with corpo:
            a **fatura do cartão**. Pode enviar vários meses e várias contas de uma vez.
         2. Arraste os arquivos para a área acima, ou clique em **Escolher arquivos**.
            Também dá para usar o menu lateral (📁 Importar Dados).
-        3. Em PDF: extrato da conta Nubank e fatura do cartão BB. Se mandar o mesmo mês
-           em mais de um formato, as repetições são descartadas
+        3. Em PDF: extratos da conta Nubank, Sicredi e XP, e fatura do cartão BB. Se mandar
+           o mesmo mês em mais de um formato, as repetições são descartadas
         4. Pronto: veja o resumo, o mês a mês e as transações já separadas por categoria
 
         **Movimentações internas** (aplicação/resgate automático, transferência entre
@@ -691,6 +691,7 @@ with corpo:
 
     tabelas = []
     leitura = []
+    titulares = []   # nome do titular, quando o PDF traz (Sicredi, XP)
     layouts = {}   # extratos com as mesmas colunas compartilham a identificação
     # CSV/Excel primeiro, depois OFX e PDF: quando o mesmo mês vem em mais de um formato,
     # fica a versão do primeiro (o CSV tem a descrição mais completa)
@@ -726,6 +727,8 @@ with corpo:
             leitura.append({"Arquivo": arquivo.name, "Conta": "—", "Situação": f"⚠️ ignorado: {e}"})
             continue
         r["nome"] = arquivo.name
+        if r.get("titular"):
+            titulares.append(r["titular"])
         if r["tipo"] == "transacoes":
             tabelas.append(r["dados"])
             leitura.append({"Arquivo": arquivo.name, "Conta": r["conta"],
@@ -781,7 +784,15 @@ with corpo:
                 leitura.append({"Arquivo": r["nome"], "Conta": r["conta"],
                                 "Situação": f"⚠️ {e} (ajuste em ⚙️ Colunas)"})
 
-    todos = consolidar(tabelas, nome_titular)
+    # Sem o nome digitado, usa o titular que veio no extrato (para achar as transferências
+    # entre as próprias contas)
+    titular_usado = nome_titular.strip() or (titulares[0] if titulares else "")
+    if not nome_titular.strip() and titulares:
+        st.caption(f"👤 Titular identificado no extrato: **{titulares[0]}**. As transferências "
+                   "para esse nome em outro banco contam como movimentação entre suas contas.")
+    if len({chave_fornecedor(x) for x in titulares}) > 1:
+        st.info("Os extratos enviados são de titulares diferentes.", icon="ℹ️")
+    todos = consolidar(tabelas, titular_usado)
     # Regras lembradas (compartilhadas + pessoais) vencem as palavras-chave
     regras_comp = regras_compartilhadas(st.session_state["versao_regras"])
     regras_todas = juntar(juntar(juntar(regras_comp, regras_privadas),

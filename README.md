@@ -3,7 +3,7 @@ Contas em Dia
 Um aplicativo web que automatiza a categorização de extratos bancários e gera análises visuais para profissionais autônomos e PJs.
 🚀 Funcionalidades
 ✅ Upload de Extratos - Vários arquivos de uma vez (meses e contas diferentes), CSV ou Excel de qualquer banco (detecta separador, acentuação, linhas de título e formato de valor brasileiro; aceita o ".excel" do BB)  
-✅ OFX de qualquer banco e extrato Nubank em PDF - O mesmo mês em mais de um formato (CSV, OFX, PDF) não duplica  
+✅ OFX de qualquer banco e extratos em PDF do Nubank, Sicredi e Banco XP (o nome do titular é lido do PDF) - O mesmo mês em mais de um formato (CSV, OFX, PDF) não duplica  
 ✅ Fatura do cartão BB em PDF - Lê as compras, parcelas e estornos  
 ✅ Movimentações internas - Aplicação/resgate automático (BB Rende Fácil, caixinhas Nubank), transferência entre suas contas e pagamento de fatura não contam como entrada nem saída  
 ✅ Identificação automática das colunas - Data, descrição, valor ou crédito/débito (ajustável na tela)  

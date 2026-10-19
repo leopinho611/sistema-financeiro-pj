@@ -728,3 +728,96 @@ def test_fatura_servico_reconhecido_nao_vira_secao():
     from financeiro import categorizar
     assert categorizar("CONTABILIDADE EXEMPLO", -10.0, padrao=None) == "SERVIÇOS DE TERCEIROS"
     assert categorizar("ALGO QUALQUER", -10.0, padrao=None) is None
+
+
+# ----------------------------------------------------------------------------
+# Extratos em PDF do Sicredi e do Banco XP (texto como sai do PDF; dados inventados)
+# ----------------------------------------------------------------------------
+TEXTO_SICREDI = """Momento de emissão
+Extrato de conta corrente
+Titular - CPF/CNPJ
+Dados da conta
+MARIA EXEMPLO SILVA 
+- 
+000.000.000-00
+Cooperativa: 
+1234 
+Movimentações 
+de 
+01/01/2026 
+a 
+31/01/2026 
+= 
+1 meses
+Data
+Descrição
+Valor
+Saldo Anterior
+R$ 100,00
+02/01/2026
+TRANSF CONTA SALARIO
++ R$ 5.000,00
+02/01/2026
+INTEGR.CAPITAL SUBSCRITO
+- R$ 20,00
+05/01/2026
+PAGAMENTO PIX - 12345678000190 PADARIA
+EXEMPLO
+- R$ 30,00
+Saldo do dia 
+05/01/2026
+R$ 5.050,00
+Movimentações 
+de 
+01/01/2026 
+a 
+31/01/2026 
+= 
+1 meses
+Data
+Descrição
+Valor
+06/01/2026
+DEBITO AUTOMATICO - 00394460005887 I R PARCELAM
+- R$ 150,00
+Cheque especial
+Fim desse extrato. ola@sicredi.com.br
+"""
+
+TEXTO_XP = """Conta Digital XP | Extrato
+MARIA EXEMPLO SILVA Banco XP S.A | Agência: 0001 | Conta: 1234567
+Data Descrição Valor Saldo
+30/01/26 às 10:03:12 PAGAMENTO DE FATURA -R$ 500,00 R$ 1.300,00
+20/01/26 às 09:07:40 Pix enviado para Casa do Bolo Industria e Comercio Varejista de Alimentos
+ Ltda
+-R$ 90,00 R$ 1.800,00
+15/01/26 às 17:24:26 Pix recebido de Cliente Exemplo Ltda R$ 1.000,00 R$ 1.890,00
+10/01/26 às 14:24:32 Transferência recebida da conta investimento R$ 890,00 R$ 890,00
+Extrato simples para conferência, sujeito a atualizações.
+CNPJ: 33.264.668/0001-03
+"""
+
+
+def test_extrato_sicredi_pdf():
+    from financeiro import eh_extrato_sicredi, ler_extrato_sicredi_pdf, titular_sicredi
+    assert eh_extrato_sicredi(TEXTO_SICREDI)
+    assert titular_sicredi(TEXTO_SICREDI) == "Maria Exemplo Silva"
+    t = ler_extrato_sicredi_pdf(TEXTO_SICREDI)
+    assert t["Valor"].tolist() == [5000.0, -20.0, -30.0, -150.0]   # saldo do dia ignorado
+    assert t["Descrição"].iat[2] == "PAGAMENTO PIX - PADARIA EXEMPLO - 12345678000190"
+    assert t["Fornecedor"].iat[2] == "Padaria Exemplo"
+    assert t["Categoria"].tolist() == ["RECEITA", "APLICAÇÃO/RESGATE", "ALIMENTAÇÃO",
+                                       "IMPOSTOS E TAXAS"]
+    assert set(t["Conta"]) == {"Sicredi"}
+
+
+def test_extrato_xp_pdf():
+    from financeiro import eh_extrato_xp, ler_extrato_xp_pdf, titular_xp
+    assert eh_extrato_xp(TEXTO_XP)
+    assert titular_xp(TEXTO_XP) == "Maria Exemplo Silva"
+    t = ler_extrato_xp_pdf(TEXTO_XP).sort_values("Data")
+    assert t["Valor"].tolist() == [890.0, 1000.0, -90.0, -500.0]
+    assert t["Categoria"].tolist() == ["APLICAÇÃO/RESGATE", "RECEITA", "ALIMENTAÇÃO",
+                                       "PAGAMENTO DE FATURA"]
+    assert t["Fornecedor"].iat[2].startswith("Casa Do Bolo")
+    assert t["Data"].dt.year.unique().tolist() == [2026]

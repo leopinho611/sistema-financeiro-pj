@@ -1,0 +1,45 @@
+"""Relatório PDF do Plus. Dados inventados."""
+
+import os
+import sys
+
+import pandas as pd
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+import relatorio  # noqa: E402
+
+
+def _t():
+    linhas = []
+    for m in range(1, 7):
+        d = f"2026-{m:02d}"
+        linhas += [
+            (f"{d}-05", "Empresa Exemplo", 5000.0, "RECEITA", "Recebido de empresas"),
+            (f"{d}-10", "Aluguel Exemplo", -1500.0, "CASA", "Aluguel"),
+            (f"{d}-12", "Mercado Exemplo", -800.0 - (300 if m > 3 else 0), "ALIMENTAÇÃO",
+             "Supermercado"),
+            (f"{d}-20", "Clinica Exemplo", -200.0, "SAÚDE", "Clínicas, consultas e exames"),
+        ]
+    t = pd.DataFrame(linhas, columns=["Data", "Fornecedor", "Valor", "Categoria", "Subcategoria"])
+    t["Data"] = pd.to_datetime(t["Data"])
+    t["Descrição"] = t["Fornecedor"].str.upper()
+    t["Tipo"] = ["Entrada" if v > 0 else "Saída" for v in t["Valor"]]
+    t["Conta"] = "Banco Exemplo"
+    t["Mês"] = t["Data"].dt.to_period("M").astype(str)
+    return t
+
+
+def test_montar_relatorio():
+    d = relatorio.montar_relatorio(_t())
+    assert round(d["entradas"], 2) == 30000.0
+    assert d["n_meses"] == 6
+    assert d["nota"] in ("bom", "atencao", "alerta")
+    assert any("Alimentação" in f for f in d["destaques"])
+    assert 1 <= len(d["sugestoes"]) <= 3
+    assert len(d["comprometido"]) == 3
+
+
+def test_gerar_pdf():
+    pdf = relatorio.gerar_pdf(relatorio.montar_relatorio(_t(), guardado=10000.0))
+    assert pdf.startswith(b"%PDF")
