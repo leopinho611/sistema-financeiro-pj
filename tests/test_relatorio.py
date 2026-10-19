@@ -57,3 +57,36 @@ def test_relatorio_sem_parcelas_e_com_um_mes():
     t = _t()
     um_mes = t[t["Mês"] == "2026-01"]
     assert relatorio.gerar_pdf(relatorio.montar_relatorio(um_mes)).startswith(b"%PDF")
+
+
+def test_fornecedor_generico():
+    assert relatorio.fornecedor_generico("Pagamento Pix")
+    assert relatorio.fornecedor_generico("Debito Convenios")
+    assert relatorio.fornecedor_generico("")
+    assert not relatorio.fornecedor_generico("Padaria Exemplo")
+
+
+def test_avisos_de_dados_faltando():
+    t = _t()
+    extra = pd.DataFrame({
+        "Data": pd.to_datetime(["2026-03-10", "2026-04-10", "2026-05-10", "2026-06-10"]),
+        "Fornecedor": ["Pagamento Pix", "Pagamento Pix", "Pagto Cartão", "Pagto Cartão"],
+        "Valor": [-900.0, -900.0, -1200.0, -1200.0],
+        "Categoria": ["TRANSFERÊNCIA", "TRANSFERÊNCIA", "CARTÃO DE CRÉDITO", "CARTÃO DE CRÉDITO"],
+        "Subcategoria": ["", "", "", ""]})
+    extra["Descrição"] = extra["Fornecedor"].str.upper()
+    extra["Tipo"], extra["Conta"] = "Saída", "Banco Exemplo"
+    extra["Mês"] = extra["Data"].dt.to_period("M").astype(str)
+    d = relatorio.montar_relatorio(pd.concat([t, extra], ignore_index=True))
+    assert d["qualidade"]["faturas"] == 2400.0
+    assert d["qualidade"]["sem_nome"][0]["conta"] == "Banco Exemplo"
+    texto = " ".join(d["destaques"] + d["sugestoes"])
+    assert "faturas" in texto and "sem o nome de quem recebeu" in texto
+    assert any("Envie também as faturas" in s for s in d["sugestoes"])
+
+
+def test_sem_sugestao_de_teto_para_gasto_pequeno():
+    t = _t()
+    t.loc[t["Categoria"] == "ALIMENTAÇÃO", "Valor"] = -10.0
+    d = relatorio.montar_relatorio(t)
+    assert not any("teto" in s for s in d["sugestoes"])
