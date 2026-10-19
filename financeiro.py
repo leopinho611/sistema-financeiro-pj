@@ -51,7 +51,8 @@ CATEGORIAS = {
     "SHOPPING": ["roupa", "sapato", "loja", "lojas", "vestuario", "shopping", "magazine",
                  "amazon*", "mercadolivre", "mercado livre", "shopee", "shein",
                  "renner", "riachuelo", "baby"],
-    "IMPOSTOS E TAXAS": ["irpf", "irpj", "i r parcelam*", "icms", "pis", "cofins", "iss", "inss", "darf",
+    "IMPOSTOS E TAXAS": ["irpf", "irpj", "irrf", "ir retido", "i r parcelam*", "icms", "pis",
+                         "cofins", "iss", "inss", "darf",
                          "gps", "csll", "simples nacional", "gru", "pref mun",
                          "prefeitura", "receita federal", "rfb", "iptu",
                          "conselho regional"],
@@ -387,7 +388,7 @@ def montar_transacoes(df, colunas, conta=""):
     t["Fornecedor"] = t["Descrição"].map(extrair_fornecedor)
     t["Conta"] = conta
     t["Mês"] = t["Data"].dt.to_period("M").astype(str)
-    return t.sort_values("Data").reset_index(drop=True)
+    return t.sort_values("Data", kind="stable").reset_index(drop=True)
 
 
 def coluna_pct(tipo):
@@ -1245,8 +1246,24 @@ def carregar_arquivo(nome, conteudo):
         if eh_extrato_nubank(texto):
             return {"tipo": "transacoes", "dados": ler_extrato_nubank_pdf(texto),
                     "conta": "Nubank"}
-        raise ValueError("PDF não reconhecido (são lidos a fatura do cartão BB e os extratos "
-                         "Nubank, Sicredi e XP); envie o extrato em CSV, Excel ou OFX.")
+        from leitores_pdf import SemLancamentos, ler_pdf_de_banco
+        dados = ler_pdf_de_banco(texto, conteudo)
+        if dados is not None:
+            # Extrato sem movimento vem com uma linha de valor zero (é o que a planilha
+            # contábil usa para a conta aparecer); aqui ela não é lançamento
+            sem_valor = dados[dados["Valor"] == 0]
+            dados = dados[dados["Valor"] != 0].reset_index(drop=True)
+            if dados.empty:
+                raise SemLancamentos(sem_valor["Conta"].iat[0],
+                                     sem_valor["Descrição"].iat[0].lower())
+            return {"tipo": "transacoes", "dados": dados,
+                    "conta": " + ".join(dados["Conta"].unique())}
+        if len(texto.strip()) < 20:
+            raise ValueError("PDF sem texto (é imagem, ou foi impresso com o texto virado "
+                             "desenho); envie o extrato em OFX, Excel ou o PDF gerado pelo banco.")
+        raise ValueError("PDF não reconhecido (são lidos extratos de BB, Bradesco, Itaú, "
+                         "Santander, Nubank, Sicredi e XP, faturas de BB, Bradesco e Itaú, e "
+                         "as aplicações desses bancos); envie o extrato em CSV, Excel ou OFX.")
     bruto = ler_extrato(nome, conteudo)
     return {"tipo": "tabela", "bruto": bruto, "conta": identificar_conta(nome, bruto.columns)}
 

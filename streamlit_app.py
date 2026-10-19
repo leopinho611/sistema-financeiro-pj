@@ -17,10 +17,11 @@ import streamlit as st
 # Depois de uma atualização, o Streamlit Cloud recarrega este arquivo mas pode
 # manter na memória a versão antiga de financeiro.py e regras.py, e o app quebra
 # com ImportError até alguém reiniciar. Recarregá-los aqui evita isso.
-for _modulo in ("financeiro", "regras", "codigos", "plus", "relatorio", "exemplo"):   # nessa ordem
+for _modulo in ("financeiro", "leitores_pdf", "regras", "codigos", "plus", "relatorio", "exemplo"):   # nessa ordem
     if _modulo in sys.modules:
         importlib.reload(sys.modules[_modulo])
 
+from leitores_pdf import SemLancamentos
 from financeiro import (
     CATEGORIA_APLICACAO,
     CATEGORIA_PADRAO,
@@ -968,6 +969,9 @@ with corpo:
     for arquivo in arquivos:
         try:
             r = carregar_arquivo(arquivo.name, arquivo.getvalue())
+        except SemLancamentos as e:
+            leitura.append({"Arquivo": arquivo.name, "Conta": e.conta, "Situação": f"➖ {e}"})
+            continue
         except Exception as e:
             leitura.append({"Arquivo": arquivo.name, "Conta": "—", "Situação": f"⚠️ ignorado: {e}"})
             continue
