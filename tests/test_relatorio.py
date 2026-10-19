@@ -43,3 +43,17 @@ def test_montar_relatorio():
 def test_gerar_pdf():
     pdf = relatorio.gerar_pdf(relatorio.montar_relatorio(_t(), guardado=10000.0))
     assert pdf.startswith(b"%PDF")
+
+
+def test_relatorio_de_exemplo_usa_dados_ficticios():
+    import exemplo
+    t = exemplo.transacoes_exemplo()
+    assert set(t["Conta"]) == {"Banco Azul", "Banco Azul Cartão"}
+    assert t["Fornecedor"].str.contains("Exemplo|pessoa|IPVA|Tarifa|App de|Cliente Alfa").all()
+    assert exemplo.relatorio_exemplo().startswith(b"%PDF")
+
+
+def test_relatorio_sem_parcelas_e_com_um_mes():
+    t = _t()
+    um_mes = t[t["Mês"] == "2026-01"]
+    assert relatorio.gerar_pdf(relatorio.montar_relatorio(um_mes)).startswith(b"%PDF")

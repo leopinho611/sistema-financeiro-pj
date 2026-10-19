@@ -15,7 +15,7 @@ import streamlit as st
 # Depois de uma atualização, o Streamlit Cloud recarrega este arquivo mas pode
 # manter na memória a versão antiga de financeiro.py e regras.py, e o app quebra
 # com ImportError até alguém reiniciar. Recarregá-los aqui evita isso.
-for _modulo in ("financeiro", "regras", "plus"):   # nessa ordem: os outros importam financeiro
+for _modulo in ("financeiro", "regras", "plus", "relatorio", "exemplo"):   # nessa ordem
     if _modulo in sys.modules:
         importlib.reload(sys.modules[_modulo])
 
@@ -44,7 +44,9 @@ from financeiro import (
     resumo_subcategorias,
 )
 from regras import RepositorioRegras, consultar_cnpj, juntar, nova_regra, regras_vazias
+import exemplo
 import plus
+import relatorio
 
 # ============================================================================
 # CONFIGURAÇÃO DO APP
@@ -151,7 +153,7 @@ st.markdown(f"""
   .st-key-upload_grande [data-testid="stFileUploaderDropzone"]:hover {{
       background: color-mix(in srgb, {DOURADO} 12%, transparent); }}
   .st-key-upload_grande [data-testid="stFileUploaderDropzone"]::before {{
-      content: "📄\A Arraste seus extratos para cá\A ou"; white-space: pre; text-align: center;
+      content: "📄\\A Arraste seus extratos para cá\\A ou"; white-space: pre; text-align: center;
       font-size: 1.15rem; font-weight: 600; line-height: 1.7; }}
   .st-key-upload_grande [data-testid="stFileUploaderDropzone"] > span {{ order: 1; }}
   .st-key-upload_grande [data-testid="stFileUploaderDropzoneInstructions"] {{ order: 2; }}
@@ -508,6 +510,12 @@ def regras_compartilhadas(_versao):
     return repo_regras.carregar()
 
 
+@st.cache_data(show_spinner=False)
+def relatorio_de_exemplo():
+    """PDF de exemplo da vitrine (dados fictícios); gerado uma vez por servidor."""
+    return exemplo.relatorio_exemplo()
+
+
 @st.cache_data(ttl=7 * 24 * 3600, show_spinner=False)
 def consultar_cnpj_cache(cnpj):
     return consultar_cnpj(cnpj)
@@ -836,8 +844,9 @@ with corpo:
     meses = max(1, df["Mês"].nunique())
     nomes_abas = ["📊 Resumo", "💰 Entradas", "💸 Saídas", "📅 Mês a Mês", "📋 Transações",
                   "📥 Download"]
-    nomes_abas += (["⭐ Imposto de Renda", "⭐ Fixos e parcelas", "⭐ Saúde financeira",
-                    "⭐ Classificar"] if PLUS else ["🔎 Consultar CNPJ", "⭐ Plus"])
+    nomes_abas += (["⭐ Relatório", "⭐ Imposto de Renda", "⭐ Fixos e parcelas",
+                    "⭐ Saúde financeira", "⭐ Classificar"] if PLUS
+                   else ["🔎 Consultar CNPJ", "⭐ Plus"])
     abas = st.tabs(nomes_abas)
     tab_resumo, tab_entradas, tab_saidas, tab_mes, tab_transacoes, tab_download = abas[:6]
 
@@ -1168,6 +1177,10 @@ with corpo:
                           formatar_reais(dedu["Total"].sum()),
                           help="Saúde, educação, previdência privada e pensão.")
             st.markdown("""
+            - **⭐ Relatório completo em PDF** — 4 páginas em linguagem simples: sua nota
+              geral, os destaques do período, para onde foi o dinheiro (categorias,
+              subcategorias e maiores gastos), o que já está comprometido nos próximos meses,
+              os pontos de atenção, a prévia do IR e os próximos passos sugeridos.
             - **⭐ Imposto de Renda** — despesas que possivelmente podem ser deduzidas (saúde,
               educação, PGBL, pensão) com o CNPJ de quem recebeu (caso seja localizável no
               extrato), e os rendimentos recebidos de empresas e de pessoas. Pronto para levar
@@ -1179,6 +1192,9 @@ with corpo:
             - **⭐ Classificar** — corrija a categoria de qualquer fornecedor e o app lembra
               nas próximas vezes.
             """)
+            st.download_button("📄 Ver um relatório de exemplo (PDF, dados fictícios)",
+                               relatorio_de_exemplo(), "Relatorio_Contas_em_Dia_exemplo.pdf",
+                               "application/pdf")
             st.markdown("**Como ter acesso:** digite seu código em *⭐ Tenho um código Plus*, "
                         "no menu lateral.")
             b1, b2 = st.columns(2)
@@ -1190,7 +1206,36 @@ with corpo:
                 st.caption("As assinaturas abrem em breve.")
         st.stop()
 
-    tab_ir, tab_recorrentes, tab_saude, tab_classificar = abas[6:]
+    tab_relatorio, tab_ir, tab_recorrentes, tab_saude, tab_classificar = abas[6:]
+
+    # ----------------------------------------------------------------------------
+    with tab_relatorio:
+        st.subheader("📄 Relatório Contas em Dia")
+        st.markdown("""
+        Um PDF de 4 páginas, para ler com calma, imprimir ou levar ao seu especialista:
+        1. **Seu dinheiro em uma página** — nota geral, quanto entrou e saiu, destaques e o
+           mês a mês
+        2. **Para onde foi o dinheiro** — categorias, subcategorias e maiores gastos
+        3. **O que já está comprometido** — próximos 3 meses, contas que se repetem e parcelas
+        4. **Atenção, imposto e próximos passos** — indicadores, prévia do IR e sugestões
+        """)
+        st.caption(f"Usa as contas e o período escolhidos no menu lateral ({periodo}). A reserva "
+                   "de emergência usa o valor informado na aba ⭐ Saúde financeira.")
+        assinatura = (tuple(filtro_contas), periodo, len(df), st.session_state.get("guardado"))
+        if st.button("Gerar relatório", type="primary"):
+            with st.spinner("Montando o relatório..."):
+                try:
+                    dados_rel = relatorio.montar_relatorio(
+                        df, guardado=st.session_state.get("guardado") or None)
+                    st.session_state["relatorio_pdf"] = (assinatura, relatorio.gerar_pdf(dados_rel))
+                except Exception as e:
+                    st.error(f"Não foi possível gerar o relatório: {e}")
+        pronto = st.session_state.get("relatorio_pdf")
+        if pronto and pronto[0] == assinatura:
+            st.download_button("📥 Baixar relatório (PDF)", pronto[1],
+                               f"Relatorio_Contas_em_Dia_{datetime.now():%Y%m%d}.pdf",
+                               "application/pdf")
+            st.caption("🔒 O relatório é gerado na memória e não fica guardado.")
 
     # ----------------------------------------------------------------------------
     with tab_ir:
@@ -1311,6 +1356,7 @@ with corpo:
     with tab_saude:
         guardado = st.number_input(
             "Quanto você tem guardado hoje, em reais? (opcional)", min_value=0, step=1000,
+            key="guardado",
             help="Poupança, investimentos e caixinhas que você pode resgatar. "
                                 "Serve só para calcular a reserva de emergência e não é salvo.")
         itens = plus.indicadores(df, compromissos, parcelas_proximo, guardado or None)
