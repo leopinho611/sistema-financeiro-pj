@@ -1434,7 +1434,7 @@ with corpo:
                           formatar_reais(dedu["Total"].sum()),
                           help="Saúde, educação, previdência privada e pensão.")
             st.markdown("""
-            - **⭐ Relatório completo em PDF** — 4 páginas em linguagem simples: sua nota
+            - **⭐ Relatório completo em PDF** — 5 páginas em linguagem simples: sua nota
               geral, os destaques do período, para onde foi o dinheiro (categorias,
               subcategorias e maiores gastos), o que já está comprometido nos próximos meses,
               os pontos de atenção, a prévia do IR e os próximos passos sugeridos.
@@ -1473,12 +1473,14 @@ with corpo:
     with tab_relatorio:
         st.subheader("📄 Relatório Contas em Dia")
         st.markdown("""
-        Um PDF de 4 páginas, para ler com calma, imprimir ou levar ao seu especialista:
+        Um PDF de 5 páginas, para ler com calma, imprimir ou levar ao seu especialista:
         1. **Seu dinheiro em uma página** — nota geral, quanto entrou e saiu, destaques e o
-           mês a mês
-        2. **Para onde foi o dinheiro** — categorias, subcategorias e maiores gastos
-        3. **O que já está comprometido** — próximos 3 meses, contas que se repetem e parcelas
-        4. **Atenção, imposto e próximos passos** — indicadores, prévia do IR e sugestões
+           caminho do que entrou ao que sobrou
+        2. **Mês a mês e aplicações** — entradas e saídas de cada mês, quanto foi guardado
+        3. **Para onde foi o dinheiro** — categorias, subcategorias e maiores gastos
+        4. **O que já está comprometido** — próximos 3 meses, contas que se repetem e parcelas
+        5. **Atenção, imposto e próximos passos** — indicadores, prévia do IR, sugestões e o
+           que falta enviar para o relatório ficar mais completo
         """)
         st.caption(f"Usa as contas e o período escolhidos no menu lateral ({periodo}). A reserva "
                    "de emergência usa o valor informado na aba ⭐ Saúde financeira.")
