@@ -16,7 +16,7 @@ Um aplicativo web que automatiza a categorização de extratos bancários e gera
 ✅ Mês a Mês - Entradas × saídas e categorias por mês  
 ✅ Tema escuro (padrão) ou claro - Azul-marinho, ciano, dourado e branco-osso; troque em ⋮ no canto superior direito  
 ✅ Exportação - CSV (padrão Excel brasileiro) ou XLSX com abas de resumo  
-✅ Filtros - Por conta, período, categoria e busca na descrição  
+✅ Filtros - Contas e categorias em botões (marcar e desmarcar), período, e busca na descrição  
 ✅ Consultar CNPJ - Pix para empresas: consulta a atividade na Receita (dados públicos) e sugere a categoria pelo CNAE; vale até fechar o app
 
 ⭐ Área Plus (com código de acesso)

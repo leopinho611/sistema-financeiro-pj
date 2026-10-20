@@ -149,9 +149,6 @@ st.markdown(f"""
   .st-key-visoes button[aria-checked="true"] {{ background: {DESTAQUE} !important; }}
   .st-key-visoes button[aria-checked="true"] p {{ font-weight: 700; color: {TEXTO_PRIMARIO}; }}
   [data-testid="stMarkdownContainer"] p.titulo-pagina {{ font-size: 1.35rem; font-weight: 700; margin: .2rem 0 0 0; }}
-  .st-key-filtros_btn button {{ background: {DOURADO}; color: {MARINHO}; border: none;
-      border-radius: 999px; font-weight: 700; }}
-  .st-key-filtros_btn button:hover {{ background: #d8b23a; color: {MARINHO}; }}
   .st-key-periodo [data-baseweb="input"] {{ border-radius: 999px; }}
   /* Faixa verde com os arquivos lidos à direita */
   .st-key-faixa_aviso {{ background: color-mix(in srgb, #fab219 16%, transparent);
@@ -218,10 +215,14 @@ st.markdown(f"""
   /* Categorias escolhidas (pílulas) */
   .stButtonGroup button[data-variant="pills"][aria-checked="true"] {{
       border-color: {DESTAQUE}; background: color-mix(in srgb, {DESTAQUE} 16%, transparent); }}
-  .st-key-todos_nenhum button {{ border: none; background: transparent; padding: 0 .3rem;
+  [class*="st-key-todos_nenhum"] [data-testid="stBaseButton-tertiary"] {{ border: none; background: transparent; padding: 0 .3rem;
       min-height: 0; opacity: .75; }}
-  .st-key-todos_nenhum {{ margin-top: -.6rem; }}
-  .st-key-todos_nenhum p {{ font-size: .82rem; }}
+  [class*="st-key-todos_nenhum"] {{ flex-wrap: wrap; row-gap: .2rem; }}
+  [class*="st-key-todos_nenhum"] p {{ font-size: .82rem; }}
+  .st-key-ir_plus button {{ border: 1px solid {DOURADO}; color: {DOURADO}; border-radius: 999px;
+      background: transparent; font-weight: 700; }}
+  .st-key-ir_plus button:hover {{ background: color-mix(in srgb, {DOURADO} 15%, transparent);
+      color: {DOURADO}; border-color: {DOURADO}; }}
   [data-testid="stBaseButton-primary"] {{ color: {TEXTO_PRIMARIO}; }}
 
   /* Tabela de categorias que abre os fornecedores na própria linha */
@@ -1347,36 +1348,57 @@ with corpo:
                               key="pagina_plus" if PLUS else "pagina_livre",
                               persist_state="page", width="stretch")
 
+    def escolher_categorias(opcoes, nome, rotulo):
+        """Pílulas para escolher categorias ou contas (todas marcadas no início). A chave
+        muda quando as opções mudam (uma reclassificação), e a escolha recomeça."""
+        chave = f"pilulas_{nome}_{abs(hash(tuple(opcoes)))}"
+        # Marcar/Desmarcar todas mudam o valor pela sessão; aí o default não pode vir junto
+        st.session_state.setdefault(chave, list(opcoes))
+        with st.container(key=f"todos_nenhum_{nome}", horizontal=True, gap="small",
+                          vertical_alignment="bottom"):
+            escolhidas = st.pills(rotulo, opcoes, selection_mode="multi", key=chave,
+                                  persist_state="page", width="content")
+            st.button("Marcar todas", key=f"todas_{nome}", type="tertiary",
+                      on_click=lambda: st.session_state.update({chave: list(opcoes)}))
+            st.button("Desmarcar todas", key=f"nenhuma_{nome}", type="tertiary",
+                      on_click=lambda: st.session_state.update({chave: []}))
+        return escolhidas
+
     # Barra do topo: título da página (ou as visões do Painel), período e filtros
     contas = sorted(todos["Conta"].unique())
     inicio, fim = todos["Data"].min().date(), todos["Data"].max().date()
-    # Filtros juntos numa linha: visão do Painel (ou o nome da página), período e contas
-    with barra_topo, st.container(key="barra_filtros", horizontal=True,
-                                  vertical_alignment="center", gap="small"):
-        if pagina == PAINEL:
-            with st.container(key="visoes", width="content"):
-                visao = st.segmented_control("Visão", ["Resumo", "Entradas", "Saídas"],
-                                             default="Resumo", required=True,
-                                             label_visibility="collapsed", key="visao",
-                                             persist_state="page")
-        else:
-            st.markdown(f'<p class="titulo-pagina">{escape(pagina)}</p>',
-                        unsafe_allow_html=True, width="content")
-        with st.container(key="periodo", width=270):
-            periodo_sel = st.date_input("📅 Período", value=(inicio, fim), min_value=inicio,
-                                        max_value=fim, format="DD/MM/YYYY",
-                                        label_visibility="collapsed", key="periodo_sel",
-                                        persist_state="page")
-        with st.container(key="filtros_btn", width="content"):
-            with st.popover("⚙ Filtros"):
-                filtro_contas = st.multiselect("Contas", contas, default=contas,
-                                               key="filtro_contas", persist_state="page")
+    # Filtros juntos: visão do Painel (ou o nome da página), Área Plus e período numa linha;
+    # embaixo, as contas e (em Entradas e Saídas) as categorias, do mesmo jeito
+    with barra_topo:
+        with st.container(key="barra_filtros", horizontal=True, vertical_alignment="center",
+                          gap="small"):
+            if pagina == PAINEL:
+                with st.container(key="visoes", width="content"):
+                    visao = st.segmented_control("Visão", ["Resumo", "Entradas", "Saídas"],
+                                                 default="Resumo", required=True,
+                                                 label_visibility="collapsed", key="visao",
+                                                 persist_state="page")
+            else:
+                st.markdown(f'<p class="titulo-pagina">{escape(pagina)}</p>',
+                            unsafe_allow_html=True, width="content")
+            if not PLUS and pagina != "⭐ Área Plus":
+                with st.container(key="ir_plus", width="content"):
+                    st.button("⭐ Área Plus", key="botao_ir_plus",
+                              on_click=lambda: st.session_state.update(
+                                  pagina_livre="⭐ Área Plus"))
+            with st.container(key="periodo", width=270):
+                periodo_sel = st.date_input("📅 Período", value=(inicio, fim),
+                                            min_value=inicio, max_value=fim,
+                                            format="DD/MM/YYYY", label_visibility="collapsed",
+                                            key="periodo_sel", persist_state="page")
+        filtro_contas = escolher_categorias(contas, "contas", "Contas")
 
     df = todos[todos["Conta"].isin(filtro_contas)]
     if isinstance(periodo_sel, tuple) and len(periodo_sel) == 2:
         df = df[(df["Data"].dt.date >= periodo_sel[0]) & (df["Data"].dt.date <= periodo_sel[1])]
     if df.empty:
-        st.warning("Nenhuma transação com esses filtros.")
+        st.warning("Escolha ao menos uma conta." if not filtro_contas
+                   else "Nenhuma transação com esses filtros.")
         st.stop()
 
     # Identifica os dados na tela (extratos, regras, contas e período), para a memória
@@ -1462,30 +1484,15 @@ with corpo:
                 st.markdown(ranking_html(tabela, tipo, n=n), unsafe_allow_html=True)
             dica(nota)
 
-    def escolher_categorias(opcoes, nome, rotulo):
-        """Pílulas para escolher as categorias (todas marcadas no início). A chave muda
-        quando as categorias mudam (uma reclassificação), e a escolha recomeça."""
-        chave = f"pilulas_{nome}_{abs(hash(tuple(opcoes)))}"
-        # Marcar/Desmarcar todas mudam o valor pela sessão; aí o default não pode vir junto
-        st.session_state.setdefault(chave, list(opcoes))
-        escolhidas = st.pills(rotulo, opcoes, selection_mode="multi", key=chave,
-                              persist_state="page")
-        with st.container(key="todos_nenhum", horizontal=True, gap="small"):
-            st.button("Marcar todas", key=f"todas_{nome}", type="tertiary",
-                      on_click=lambda: st.session_state.update({chave: list(opcoes)}))
-            st.button("Desmarcar todas", key=f"nenhuma_{nome}", type="tertiary",
-                      on_click=lambda: st.session_state.update({chave: []}))
-        return escolhidas
-
-    todos_meses = sorted(df["Mês"].unique())
-
-    def linha_por_mes(dados, nome, cor):
-        """O total das categorias escolhidas, mês a mês, numa linha só."""
-        mensal = (dados["Valor"].abs().groupby(dados["Mês"]).sum()
-                  .reindex(todos_meses, fill_value=0).rename_axis("Mês").reset_index())
-        st.altair_chart(grafico_mensal(mensal, [("Valor", nome, cor)], altura=300),
-                        width="stretch")
-        dica("Passe o mouse sobre os pontos para ver o valor completo")
+    def linhas_por_mes(dados, rotulo):
+        """Uma linha por categoria escolhida (as 7 maiores; o resto em "Outros") e o total,
+        mês a mês."""
+        longo = (dados.assign(Valor=dados["Valor"].abs())
+                 .groupby(["Mês", "Categoria"], as_index=False)["Valor"].sum()
+                 .rename(columns={"Categoria": "Fornecedor"}))
+        st.altair_chart(grafico_linhas(longo, "Total", max_series=7, rotulo=rotulo,
+                                       altura=460, largura_nomes=170), width="stretch")
+        dica("Passe o mouse sobre o gráfico para ver os valores de cada mês")
 
     # ----------------------------------------------------------------------------
     if pagina == PAINEL and visao == "Resumo":
@@ -1562,8 +1569,8 @@ with corpo:
                     ])
                     if varios_meses:
                         with st.container(border=True):
-                            titulo_painel("Entradas", "por mês")
-                            linha_por_mes(df_e, "Entrou", COR_ENTRADAS)
+                            titulo_painel("Entradas", "por tipo e total, mês a mês")
+                            linhas_por_mes(df_e, "Tipo")
                 with dir_:
                     painel_ciano("De onde vem", "Tipos escolhidos", tipos_sel, "Entrada",
                                  "Clique num tipo, logo abaixo, para ver quem pagou")
@@ -1606,8 +1613,8 @@ with corpo:
                     ])
                     if varios_meses:
                         with st.container(border=True):
-                            titulo_painel("Saídas", "por mês")
-                            linha_por_mes(df_s, "Saiu", COR_SAIDAS)
+                            titulo_painel("Saídas", "por categoria e total, mês a mês")
+                            linhas_por_mes(df_s, "Categoria")
                 with dir_:
                     painel_ciano("Para onde vai", "Categorias escolhidas", cats_sel, "Saída",
                                  "Clique numa categoria, logo abaixo, para abrir os fornecedores")
