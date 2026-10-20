@@ -750,33 +750,31 @@ def _barra_pct(pct, largura=60, cor=COR_SAIDAS):
     return d
 
 
-def _quebrar(texto, limite=12):
-    """Quebra um nome em até 2 linhas curtas para caber embaixo da barra."""
-    palavras, linhas, atual = texto.split(), [], ""
-    for p in palavras:
-        if atual and len(atual) + 1 + len(p) > limite:
-            linhas.append(atual)
-            atual = p
-        else:
-            atual = f"{atual} {p}".strip()
-    linhas.append(atual)
-    if len(linhas) > 2:
-        linhas = [linhas[0], " ".join(linhas[1:])[:limite - 1] + "…"]
-    return linhas
+def _mil(v):
+    """Valor em milhares para rótulo curto: 10 / 9,9 / 0,5 (com sinal)."""
+    a = abs(v) / 1000
+    if a < 0.05:
+        return "0"
+    texto = f"{a:.0f}" if a >= 10 else f"{a:.1f}".replace(".", ",")
+    return ("+" if v >= 0 else "-") + texto
 
 
-def _desenhar_degraus(itens, altura, legenda, linhas_nome=2):
-    """Gráfico em cascata genérico. itens: dicts com nome, de, ate, cor, rotulo e, opcional,
-    extra (lista de (texto, cor) escrita embaixo do nome)."""
+def _grafico_cascata_mensal(mensal, altura=260):
+    """Cascata mês a mês com duas barras por mês: a entrada sobe (azul) e a saída desce
+    (dourado), sempre a partir de onde o mês anterior terminou. A última barra (cinza) é o
+    acumulado do período. Rótulos em R$ mil para caber."""
     from reportlab.graphics.shapes import Line
-    n = len(itens)
-    sob_nome = 7.5 * linhas_nome + 7.5 * max((len(i.get("extra", [])) for i in itens), default=0)
-    esq, dir_, base, topo_px = 36, LARGURA - 4, 14 + sob_nome, altura - 24
-    larg = (dir_ - esq) / n
-    barra = larg * 0.62
-    valores = [v for i in itens for v in (i["de"], i["ate"])]
-    vmin, vmax = min(0, min(valores)), max(0, max(valores))
-    passo = _topo(vmax - vmin) / 4
+    meses = list(mensal.itertuples(index=False))
+    esq, dir_, base, topo_px = 36, LARGURA - 4, 22, altura - 24
+    vagas = 2 * len(meses) + 1.6            # 2 barras por mês + o acumulado (um pouco mais largo)
+    vaga = (dir_ - esq) / (vagas + 0.35 * len(meses))   # e um respiro entre os meses
+    barra, respiro = vaga * 0.86, vaga * 0.35
+    niveis, nivel = [0.0], 0.0
+    for m in meses:
+        niveis += [nivel + m.Entradas, nivel + m.Entradas - m.Saídas]
+        nivel = niveis[-1]
+    vmin, vmax = min(niveis), max(niveis)
+    passo = _topo((vmax - vmin) or 1) / 4
     vmax = math.ceil(vmax / passo) * passo
     vmin = math.floor(vmin / passo) * passo if vmin < 0 else 0
     faixa = (vmax - vmin) or 1
@@ -793,51 +791,41 @@ def _desenhar_degraus(itens, altura, legenda, linhas_nome=2):
                      fontSize=6, fillColor=CINZA, textAnchor="end"))
     if vmin < 0:
         d.add(Line(esq, y(0), dir_, y(0), strokeColor=CINZA, strokeWidth=0.6))
-    anterior = None
-    for k, it in enumerate(itens):
-        x = esq + k * larg + (larg - barra) / 2
-        cx = x + barra / 2
-        if anterior is not None and it.get("liga", True):   # liga o fim do degrau anterior
-            d.add(Line(anterior[0], y(anterior[1]), x, y(anterior[1]), strokeColor=CINZA,
-                       strokeWidth=0.4))
-        baixo, alto = min(it["de"], it["ate"]), max(it["de"], it["ate"])
-        d.add(Rect(x, y(baixo), barra, max(1, y(alto) - y(baixo)), fillColor=it["cor"],
+
+    def degrau(x, de, ate, cor, rotulo, largura=barra):
+        baixo, alto = min(de, ate), max(de, ate)
+        d.add(Rect(x, y(baixo), largura, max(0.8, y(alto) - y(baixo)), fillColor=cor,
                    strokeColor=None))
-        d.add(String(cx, y(alto) + 3, it["rotulo"], fontName="Helvetica-Bold", fontSize=6.5,
-                     fillColor=MARINHO, textAnchor="middle"))
-        linhas = _quebrar(it["nome"]) if linhas_nome > 1 else [it["nome"]]
-        for q, linha in enumerate(linhas):
-            d.add(String(cx, base - 9 - q * 7.5, linha, fontName="Helvetica", fontSize=6,
-                         fillColor=MARINHO, textAnchor="middle"))
-        for q, (texto, cor) in enumerate(it.get("extra", [])):
-            d.add(String(cx, base - 9 - (len(linhas) + q) * 7.5, texto, fontName="Helvetica",
-                         fontSize=5.8, fillColor=cor, textAnchor="middle"))
-        anterior = (x + barra, it["ate"])
-    for k, (nome, cor) in enumerate(legenda):
-        lx = esq + k * 90
+        d.add(String(x + largura / 2, y(alto) + 2.5, rotulo, fontName="Helvetica-Bold",
+                     fontSize=5.6, fillColor=MARINHO, textAnchor="middle"))
+
+    x, nivel, fim_anterior = esq + respiro / 2, 0.0, None
+    for m in meses:
+        if fim_anterior is not None:   # linha fina ligando um degrau ao próximo
+            d.add(Line(fim_anterior, y(nivel), x, y(nivel), strokeColor=CINZA, strokeWidth=0.4))
+        degrau(x, nivel, nivel + m.Entradas, COR_ENTRADAS, _mil(m.Entradas))
+        topo = nivel + m.Entradas
+        d.add(Line(x + barra, y(topo), x + vaga, y(topo), strokeColor=CINZA, strokeWidth=0.4))
+        degrau(x + vaga, topo, topo - m.Saídas, COR_SAIDAS, _mil(-m.Saídas))
+        d.add(String(x + vaga, base - 10, rotulo_mes(m.Mês), fontName="Helvetica",
+                     fontSize=6, fillColor=MARINHO, textAnchor="middle"))
+        nivel = topo - m.Saídas
+        fim_anterior = x + vaga + barra
+        x += 2 * vaga + respiro
+    larg_total = barra * 1.6
+    d.add(Line(fim_anterior, y(nivel), x, y(nivel), strokeColor=CINZA, strokeWidth=0.4))
+    degrau(x, 0, nivel, COR_TOTAL, _mil(nivel), larg_total)
+    d.add(String(x + larg_total / 2, base - 10, "Acumulado", fontName="Helvetica", fontSize=6,
+                 fillColor=MARINHO, textAnchor="middle"))
+    for k, (nome, cor) in enumerate([("Entrou", COR_ENTRADAS), ("Saiu", COR_SAIDAS),
+                                     ("Acumulado do período", COR_TOTAL)]):
+        lx = esq + k * 80
         d.add(Rect(lx, altura - 9, 8, 8, fillColor=cor, strokeColor=None))
         d.add(String(lx + 11, altura - 8, nome, fontName="Helvetica", fontSize=7,
                      fillColor=MARINHO))
+    d.add(String(dir_, altura - 8, "valores nas barras em R$ mil", fontName="Helvetica-Oblique",
+                 fontSize=6, fillColor=CINZA, textAnchor="end"))
     return d
-
-
-def _grafico_cascata_mensal(mensal, altura=250):
-    """Mês a mês: cada mês sobe (sobrou) ou desce (faltou) a partir de onde o anterior
-    terminou; embaixo do mês, quanto entrou (E) e saiu (S); no fim, o acumulado."""
-    itens, nivel = [], 0.0
-    for _, m in mensal.iterrows():
-        saldo = m["Entradas"] - m["Saídas"]
-        itens.append({"nome": rotulo_mes(m["Mês"]), "de": nivel, "ate": nivel + saldo,
-                      "cor": COR_ENTRADAS if saldo >= 0 else COR_SAIDAS,
-                      "rotulo": ("+" if saldo >= 0 else "-") + _compacto(abs(saldo)),
-                      "extra": [(f"E {_compacto(m['Entradas'])}", COR_ENTRADAS),
-                                (f"S {_compacto(m['Saídas'])}", COR_SAIDAS)]})
-        nivel += saldo
-    itens.append({"nome": "Acumulado", "de": 0, "ate": nivel, "cor": COR_TOTAL,
-                  "rotulo": ("+" if nivel >= 0 else "-") + _compacto(abs(nivel))})
-    return _desenhar_degraus(itens, altura, [("Sobrou no mês", COR_ENTRADAS),
-                                             ("Faltou no mês", COR_SAIDAS),
-                                             ("Acumulado", COR_TOTAL)], linhas_nome=1)
 
 
 def _pagina1(dados, e):
@@ -868,9 +856,10 @@ def _pagina_mes_a_mes(dados, e):
     mensal = dados["mensal"]
     h = [Paragraph("Mês a mês e aplicações", e["titulo"]),
          Paragraph("Quanto sobrou ou faltou em cada mês", e["sub"]),
-         Paragraph("Cada barra é o saldo do mês (entradas menos saídas), começando de onde o mês "
-                   "anterior terminou. Embaixo de cada mês: quanto entrou (E) e saiu (S). A "
-                   "última barra é o acumulado do período.", e["pequeno"]), Spacer(1, 4),
+         Paragraph("Em cada mês, a barra azul sobe com o que entrou e a dourada desce com o que "
+                   "saiu, começando de onde o mês anterior terminou. A última barra é o "
+                   "acumulado do período: quanto sobrou ou faltou no total.", e["pequeno"]),
+         Spacer(1, 4),
          _grafico_cascata_mensal(mensal),
          Paragraph("Aplicações", e["sub"])]
     a = dados["aplicacoes"]
