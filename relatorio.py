@@ -337,16 +337,6 @@ def tipo_de_gasto(categoria, subcategoria):
     return "outros"
 
 
-def _cascata(entradas, cats, n=6):
-    """Do que entrou ao que sobrou: as n maiores categorias e o resto junto."""
-    passos = [(c["Categoria"].capitalize(), c["Total"]) for _, c in cats.head(n).iterrows()]
-    resto = cats.iloc[n:]
-    if not resto.empty:
-        passos.append((f"Outras ({len(resto)})", resto["Total"].sum()))
-    return {"entradas": entradas, "passos": passos,
-            "resultado": entradas - sum(v for _, v in passos)}
-
-
 def _aplicacoes(t):
     """Aplicações e resgates (movimentação interna) e rendimentos recebidos."""
     a = t[t["Categoria"] == CATEGORIA_APLICACAO]
@@ -481,7 +471,6 @@ def montar_relatorio(t, guardado=None, hoje=None):
         "nota": nota, "contagem": contagem, "pct_nao_id": pct_nao_id, "guardado": guardado,
         "ano_ir": anos[-1] if anos else None, "ir": ir,
         "qualidade": qualidade, "aplicacoes": aplicacoes, "juros": juros,
-        "cascata": _cascata(entradas, cats),
         "gasto_tipo": {k: v / n_meses for k, v in gasto_tipo.items()},
         "melhorias": _melhorias(t, n_meses, qualidade, aplicacoes), "limites": LIMITES,
         "destaques": _destaques(t, mensal, variacao, compromissos + parcela_prox,
@@ -832,23 +821,6 @@ def _desenhar_degraus(itens, altura, legenda, linhas_nome=2):
     return d
 
 
-def _grafico_cascata(cascata, altura=210):
-    """Do que entrou ao que sobrou: barra azul (entrou), degraus dourados (cada grupo de
-    gasto) e a barra cinza do resultado."""
-    itens = [{"nome": "Entrou", "de": 0, "ate": cascata["entradas"], "cor": COR_ENTRADAS,
-              "rotulo": _compacto(cascata["entradas"])}]
-    nivel = cascata["entradas"]
-    for nome, v in cascata["passos"]:
-        itens.append({"nome": nome, "de": nivel, "ate": nivel - v, "cor": COR_SAIDAS,
-                      "rotulo": "-" + _compacto(v)})
-        nivel -= v
-    res = cascata["resultado"]
-    itens.append({"nome": "Sobrou" if res >= 0 else "Faltou", "de": 0, "ate": res,
-                  "cor": COR_TOTAL, "rotulo": ("" if res >= 0 else "-") + _compacto(abs(res))})
-    return _desenhar_degraus(itens, altura, [("Entrou", COR_ENTRADAS), ("Saiu", COR_SAIDAS),
-                                             ("Resultado", COR_TOTAL)])
-
-
 def _grafico_cascata_mensal(mensal, altura=250):
     """Mês a mês: cada mês sobe (sobrou) ou desce (faltou) a partir de onde o anterior
     terminou; embaixo do mês, quanto entrou (E) e saiu (S); no fim, o acumulado."""
@@ -877,10 +849,6 @@ def _pagina1(dados, e):
                    "transferências de outras pessoas e reembolsos).", e["pequeno"]),
          Paragraph("Destaques", e["sub"])]
     h += [Paragraph(f, e["item"], bulletText="•") for f in dados["destaques"]]
-    h += [Paragraph("Do que entrou ao que sobrou", e["sub"]),
-          Paragraph("O período inteiro: tudo o que entrou e, descontado degrau por degrau, "
-                    "para onde foi.", e["pequeno"]), Spacer(1, 2),
-          _grafico_cascata(dados["cascata"])]
     gt = dados["gasto_tipo"]
     if gt:
         partes = []

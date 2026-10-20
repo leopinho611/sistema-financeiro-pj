@@ -1508,8 +1508,8 @@ with corpo:
         st.subheader("📄 Relatório Contas em Dia")
         st.markdown("""
         Um PDF de 5 páginas, para ler com calma, imprimir ou levar ao seu especialista:
-        1. **Seu dinheiro em uma página** — nota geral, quanto entrou e saiu, destaques e o
-           caminho do que entrou ao que sobrou
+        1. **Seu dinheiro em uma página** — nota geral, quanto entrou e saiu, destaques e
+           gastos essenciais × escolhas
         2. **Mês a mês e aplicações** — entradas e saídas de cada mês, quanto foi guardado
         3. **Para onde foi o dinheiro** — categorias, subcategorias e maiores gastos
         4. **O que já está comprometido** — próximos 3 meses, contas que se repetem e parcelas

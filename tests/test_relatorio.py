@@ -92,12 +92,8 @@ def test_sem_sugestao_de_teto_para_gasto_pequeno():
     assert not any("teto" in s for s in d["sugestoes"])
 
 
-def test_cascata_essenciais_e_melhorias():
+def test_essenciais_e_melhorias():
     d = relatorio.montar_relatorio(_t())
-    c = d["cascata"]
-    assert c["entradas"] == 30000.0
-    assert round(c["resultado"], 2) == round(30000.0 - sum(v for _, v in c["passos"]), 2)
-    assert c["passos"][0][0] == "Casa"
     assert relatorio.tipo_de_gasto("ALIMENTAÇÃO", "Supermercado") == "essencial"
     assert relatorio.tipo_de_gasto("ALIMENTAÇÃO", "Restaurante") == "escolha"
     assert relatorio.tipo_de_gasto("TRANSFERÊNCIA", "") == "outros"
