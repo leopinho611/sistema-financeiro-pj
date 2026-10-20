@@ -1,16 +1,23 @@
-# Identidade visual: azul-marinho, dourado e branco-osso.
-# Dois temas: o visitante escolhe em ⋮ (canto superior direito) → Settings.
+# Identidade visual: azul-marinho, ciano e dourado (tema escuro, o padrão) e branco-osso
+# (tema claro). O visitante troca em ⋮ (canto superior direito); o app abre no escuro na
+# primeira visita.
 
-# Tema claro (visual original, branco-osso)
+# Tema claro (branco-osso)
 [theme.light]
-primaryColor = "#1b2a4a"               # azul-marinho (botões, abas, seleção)
+primaryColor = "#1d2b42"               # azul-marinho (botões, seleção)
 backgroundColor = "#f7f3ea"            # branco-osso
-secondaryBackgroundColor = "#ece4d2"   # branco-osso mais escuro (barra lateral, caixas)
+secondaryBackgroundColor = "#ece4d2"   # branco-osso mais escuro (caixas)
 textColor = "#14213d"                  # marinho escuro
 
-# Tema escuro (fundo azul-marinho, detalhes dourados, texto branco-osso)
+[theme.light.sidebar]
+backgroundColor = "#ece4d2"
+
+# Tema escuro (fundo azul-marinho, destaques em ciano, detalhes dourados)
 [theme.dark]
-primaryColor = "#c9a227"               # dourado
+primaryColor = "#70ddff"               # ciano
 backgroundColor = "#0f1a2e"            # azul-marinho profundo
-secondaryBackgroundColor = "#18264a"   # marinho (barra lateral, caixas)
+secondaryBackgroundColor = "#1d2b42"   # marinho (caixas)
 textColor = "#f2ece0"                  # branco-osso
+
+[theme.dark.sidebar]
+backgroundColor = "#1d2b42"

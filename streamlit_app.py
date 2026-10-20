@@ -59,35 +59,158 @@ st.set_page_config(
     page_title="Contas em Dia",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state=210,   # barra lateral estreita (o visitante pode arrastar a borda)
 )
+
+# Na primeira visita o app abre no tema escuro; depois vale a escolha do visitante em ⋮
+st.html("""<script>
+(() => { try { if (!localStorage.getItem("contasEmDia-tema")) {
+    localStorage.setItem("contasEmDia-tema", "1");
+    localStorage.setItem(`stActiveTheme-${window.location.pathname}-v2`, '"Dark"');
+    location.reload(); } } catch (e) {} })();
+</script>""", unsafe_allow_javascript=True)
 
 # Identidade visual: azul-marinho, dourado e branco-osso. Os temas claro e escuro
 # ficam em .streamlit/config.toml; o CSS abaixo herda a cor do texto do tema
 # (currentColor) para funcionar nos dois.
 DOURADO = "#c9a227"        # detalhes (linhas, bordas); não usado em dados
+CIANO = "#70ddff"          # destaques no tema escuro
+MARINHO = "#1d2b42"
+ARDOSIA = "#506585"        # bordas e textos discretos
+OSSO = "#f7f3ea"
+ESCURO = (st.context.theme.type or "dark") == "dark"
 # Cores dos gráficos: validadas para contraste >= 3:1 e separação para daltonismo
 # tanto no fundo branco-osso quanto no azul-marinho escuro
-COR_ENTRADAS = "#3d6bc4"   # azul
-COR_SAIDAS = "#a8801f"     # dourado escuro
+COR_ENTRADAS = CIANO if ESCURO else "#3d6bc4"   # ciano / azul
+COR_SAIDAS = DOURADO if ESCURO else "#a8801f"   # dourado
+# Cores dos gráficos: validadas para contraste >= 3:1 e separação para daltonismo
+# tanto no fundo branco-osso quanto no azul-marinho escuro
+
+# Cores que mudam com o tema: ciano no escuro, marinho no claro
+DESTAQUE = CIANO if ESCURO else MARINHO
+CARTAO_FUNDO = ("linear-gradient(160deg, #24395c, #1b2a44)" if ESCURO
+                else "color-mix(in srgb, #1d2b42 5%, transparent)")
+TEXTO_PRIMARIO = MARINHO if ESCURO else "#ffffff"
 
 st.markdown(f"""
 <style>
-  .cabecalho {{ border-bottom: 2px solid {DOURADO}; padding-bottom: .4rem; margin-bottom: 1.2rem; }}
-  .cabecalho h1 {{ font-weight: 700; margin: 0; padding: 0; }}
-  .cabecalho .sistema {{ text-align: right; font-size: .95rem; margin: 0; opacity: .8;
+  [data-testid="stMainBlockContainer"] {{ padding-top: 2.6rem; }}
+  .cabecalho {{ display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem;
+                border-bottom: 1px solid color-mix(in srgb, {DOURADO} 60%, transparent);
+                padding-bottom: .35rem; margin-bottom: .9rem; }}
+  .cabecalho h1 {{ font-weight: 700; margin: 0; padding: 0; font-size: 2.6rem; line-height: 1.1; }}
+  .cabecalho .sistema {{ text-align: right; font-size: .9rem; margin: 0; opacity: .8;
                          letter-spacing: .04em; }}
   .cabecalho .slogan {{ text-align: right; color: {DOURADO}; font-style: italic;
-                        font-size: 1.05rem; margin: 0; letter-spacing: .02em; }}
-  [data-testid="stMetric"] {{ background: color-mix(in srgb, currentColor 4%, transparent);
-                              border: 1px solid color-mix(in srgb, {DOURADO} 35%, transparent);
-                              border-left: 4px solid {DOURADO}; border-radius: 8px;
-                              padding: .7rem 1rem; }}
-  [data-testid="stMetricLabel"] p {{ opacity: .75; }}
-  [data-testid="stMetricValue"] {{ font-size: 1.55rem; }}
+                        font-size: 1rem; margin: 0; letter-spacing: .02em; }}
+  [data-testid="stMetric"] {{ background: {CARTAO_FUNDO}; border-radius: 10px;
+                              border: 1px solid color-mix(in srgb, {DESTAQUE} 40%, transparent);
+                              padding: .75rem 1rem; height: 100%; }}
+  [data-testid="stMetricLabel"] p {{ font-weight: 600; }}
+  [data-testid="stMetricValue"] {{ font-size: 1.5rem; font-weight: 700; }}
   .dica {{ font-size: .85rem; margin: -.3rem 0 .6rem 0; opacity: .7; }}
   .dica::before {{ content: "☝ "; color: {DOURADO}; }}
-  [data-testid="stSidebar"] {{ border-right: 2px solid {DOURADO}; }}
+  [data-testid="stSidebar"] {{ border-right: 1px solid color-mix(in srgb, {ARDOSIA} 70%, transparent); }}
+  [data-testid="stSidebarContent"] {{ padding-left: .7rem; padding-right: .7rem; }}
+  [data-testid="stSidebarContent"] [data-testid="stSidebarUserContent"] {{ padding: 0 0 2rem 0; }}
+  .marca {{ text-align: center; margin: -.4rem 0 .9rem 0; }}
+  [data-testid="stSidebarHeader"] {{ height: 2.2rem; margin-bottom: 0; }}
+  .marca {{ text-align: center; margin: 0 0 .6rem 0; line-height: 1.3; }}
+  .marca b {{ display: block; font-size: 1rem; letter-spacing: .08em; white-space: nowrap; }}
+  .marca span {{ display: block; color: {DOURADO}; font-size: .6rem; font-weight: 700;
+                 letter-spacing: .16em; white-space: nowrap; }}
+  [data-testid="stMarkdownContainer"] p.secao {{ font-size: .7rem; letter-spacing: .14em;
+      text-transform: uppercase; opacity: .65; margin: .5rem 0 0 0; font-weight: 600; }}
+  [data-testid="stSidebarUserContent"] [data-testid="stCaptionContainer"] {{ font-size: .78rem; }}
+  [data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] {{ padding: .7rem .5rem;
+      flex-direction: column; gap: .3rem; border: 1px dashed color-mix(in srgb, {ARDOSIA} 90%, transparent); }}
+  [data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] button {{ width: 100%; }}
+  [data-testid="stSidebar"] [data-testid="stFileUploaderDropzoneInstructions"] {{ display: none; }}
+  /* Menu de navegação: o rádio vira uma lista de itens */
+  .st-key-menu [role="radiogroup"] {{ gap: .1rem; width: 100%; }}
+  .st-key-menu [role="radiogroup"] > div {{ width: 100%; }}
+  .st-key-menu [data-testid="stRadioOption"] {{ width: 100%; margin: 0; padding: .4rem .65rem;
+      border-radius: 8px; border-left: 3px solid transparent; cursor: pointer; }}
+  .st-key-menu [data-testid="stRadioOption"] > div > div:first-child {{ display: none; }}
+  .st-key-menu [data-testid="stRadioOption"]:hover {{
+      background: color-mix(in srgb, {DESTAQUE} 10%, transparent); }}
+  .st-key-menu [data-testid="stRadioOption"][data-selected="true"] {{
+      background: color-mix(in srgb, {DESTAQUE} 16%, transparent); border-left-color: {DOURADO}; }}
+  .st-key-menu [data-testid="stRadioOption"][data-selected="true"] p {{ font-weight: 600; }}
+  /* Barra do topo: visões do Painel no meio, período e filtros à direita */
+  .st-key-visoes [data-testid="stButtonGroup"] {{ display: flex; justify-content: center; }}
+  .st-key-visoes [data-testid="stButtonGroup"] > div {{ border-radius: 999px; padding: 3px;
+      border: 1px solid color-mix(in srgb, {ARDOSIA} 80%, transparent); }}
+  .st-key-visoes button {{ border-radius: 999px !important; border: none !important;
+      min-width: 6.5rem; }}
+  .st-key-visoes button[aria-checked="true"] {{ background: {DESTAQUE} !important; }}
+  .st-key-visoes button[aria-checked="true"] p {{ font-weight: 700; color: {TEXTO_PRIMARIO}; }}
+  [data-testid="stMarkdownContainer"] p.titulo-pagina {{ font-size: 1.35rem; font-weight: 700; margin: .2rem 0 0 0; }}
+  .st-key-filtros_btn button {{ background: {DOURADO}; color: {MARINHO}; border: none;
+      border-radius: 999px; font-weight: 700; }}
+  .st-key-filtros_btn button:hover {{ background: #d8b23a; color: {MARINHO}; }}
+  .st-key-periodo [data-baseweb="input"] {{ border-radius: 999px; }}
+  /* Faixa verde com os arquivos lidos à direita */
+  .st-key-faixa_ok {{ background: color-mix(in srgb, #0ca30c 16%, transparent);
+      border: 1px solid color-mix(in srgb, #0ca30c 55%, transparent); border-radius: 8px;
+      padding: .2rem .4rem .2rem .9rem; margin-bottom: .4rem; }}
+  .st-key-faixa_ok [data-testid="stHorizontalBlock"] {{ align-items: center; }}
+  .st-key-faixa_ok p {{ margin: 0; }}
+  .st-key-faixa_ok [data-testid="stMarkdownContainer"] {{ margin-bottom: 0; }}
+  .st-key-faixa_ok [data-testid="stPopover"] {{ display: flex; justify-content: flex-end; }}
+  /* Cartões de números do Painel */
+  .kpis {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .8rem;
+           margin-bottom: 1rem; }}
+  .kpi {{ background: {CARTAO_FUNDO}; border-radius: 10px; padding: .75rem .9rem;
+          border: 1px solid color-mix(in srgb, {DESTAQUE} 40%, transparent); min-width: 0; }}
+  .kpi .rot {{ font-weight: 600; font-size: .88rem; display: flex; gap: .45rem;
+               align-items: center; }}
+  .kpi .ico {{ background: color-mix(in srgb, {DESTAQUE} 18%, transparent); border-radius: 6px;
+               padding: .05rem .3rem; }}
+  .kpi .val {{ font-size: clamp(1.05rem, 1.55vw, 1.5rem); font-weight: 700; white-space: nowrap;
+               font-variant-numeric: tabular-nums; margin: .35rem 0 .1rem 0; overflow: hidden;
+               text-overflow: ellipsis; }}
+  .kpi .val.neg {{ color: {"#ff8a80" if ESCURO else "#c62828"}; }}
+  .kpi .val.ouro {{ color: {DOURADO}; }}
+  .kpi .nota {{ font-size: .76rem; opacity: .72; }}
+  .st-key-faixa_ok button {{ border: none; background: transparent; }}
+  /* Painéis com borda e o painel em degradê ciano */
+  .titulo-painel {{ font-weight: 700; font-size: 1.05rem; margin-bottom: .3rem; }}
+  .titulo-painel .tag {{ background: {DOURADO}; color: {MARINHO}; font-size: .72rem;
+      border-radius: 999px; padding: .1rem .55rem; margin-left: .5rem; vertical-align: middle; }}
+  .st-key-painel_ciano {{ background: linear-gradient(170deg, #7fe2ff 0%, #3fa7d6 55%, #2f7fb0 100%);
+      color: {MARINHO}; border-radius: 12px; padding: 1rem 1.1rem 1.2rem 1.1rem;
+      box-sizing: border-box; }}
+  .st-key-painel_ciano * {{ color: {MARINHO}; }}
+  .st-key-painel_ciano h3 {{ margin: 0; padding: 0 0 .2rem 0; }}
+  .st-key-painel_ciano .sub-titulo {{ font-size: .72rem; letter-spacing: .12em; font-weight: 700;
+      text-transform: uppercase; margin-bottom: .3rem; }}
+  .st-key-painel_ciano .tabcat {{ border: none; font-size: .86rem; }}
+  /* No painel estreito, a barra de % vai por baixo da linha */
+  .st-key-painel_ciano .tabcat .linha {{ grid-template-columns: minmax(0, 1fr) auto 3.3rem;
+      padding: .38rem 0 .55rem 0; gap: .6rem; position: relative; }}
+  .st-key-painel_ciano .tabcat .pct .trilho {{ position: absolute; left: 0; right: 0; bottom: 3px;
+      height: 4px; }}
+  .st-key-painel_ciano .tabcat .pct b {{ min-width: 0; width: 100%; }}
+  .st-key-painel_ciano .dica {{ font-size: .78rem; margin-top: .6rem; }}
+  .st-key-painel_ciano .tabcat .linha .nome {{ text-transform: lowercase; display: inline-block; }}
+  .st-key-painel_ciano .tabcat .linha .nome::first-letter {{ text-transform: uppercase; }}
+  .st-key-painel_ciano .tabcat .forn .nome {{ padding-left: 0; }}
+  .st-key-painel_ciano .tabcat .qtd {{ display: none; }}
+  .st-key-painel_ciano .tabcat .linha + .linha, .st-key-painel_ciano .tabcat details {{
+      border-bottom: 1px solid rgba(29, 43, 66, .18); }}
+  .st-key-painel_ciano .tabcat .pct .trilho {{ background: rgba(29, 43, 66, .18); }}
+  .st-key-painel_ciano .tabcat .pct .trilho i {{ background: {MARINHO}; }}
+  .st-key-painel_ciano .dica {{ opacity: .8; }}
+  .st-key-painel_ciano .dica::before {{ color: {MARINHO}; }}
+  /* Categorias escolhidas (pílulas) */
+  .stButtonGroup button[data-variant="pills"][aria-checked="true"] {{
+      border-color: {DESTAQUE}; background: color-mix(in srgb, {DESTAQUE} 16%, transparent); }}
+  .st-key-todos_nenhum button {{ border: none; background: transparent; padding: 0 .3rem;
+      min-height: 0; opacity: .75; }}
+  .st-key-todos_nenhum {{ margin-top: -.6rem; }}
+  .st-key-todos_nenhum p {{ font-size: .82rem; }}
+  [data-testid="stBaseButton-primary"] {{ color: {TEXTO_PRIMARIO}; }}
 
   /* Tabela de categorias que abre os fornecedores na própria linha */
   .tabcat {{ border: 1px solid color-mix(in srgb, {DOURADO} 40%, transparent);
@@ -162,10 +285,10 @@ st.markdown(f"""
   .st-key-upload_grande [data-testid="stFileUploaderDropzone"] > span {{ order: 1; }}
   .st-key-upload_grande [data-testid="stFileUploaderDropzoneInstructions"] {{ order: 2; }}
   .st-key-upload_grande [data-testid="stBaseButton-secondary"] {{
-      background: {COR_ENTRADAS}; color: #ffffff; border: none; border-radius: 999px;
+      background: {COR_ENTRADAS}; color: {TEXTO_PRIMARIO}; border: none; border-radius: 999px;
       padding: .7rem 1.6rem; font-size: 1.05rem; font-weight: 600; }}
   .st-key-upload_grande [data-testid="stBaseButton-secondary"]:hover {{
-      background: #2f5aa8; color: #ffffff; }}
+      background: color-mix(in srgb, {COR_ENTRADAS} 85%, #000); color: {TEXTO_PRIMARIO}; }}
   .st-key-upload_grande [data-testid="stBaseButton-secondary"] p {{ font-size: 1.05rem; }}
   /* Textos do envio em português */
   [data-testid="stFileUploaderDropzone"] [data-testid="stBaseButton-secondary"] p {{
@@ -205,12 +328,16 @@ st.markdown(f"""
     .flutuantes .curto {{ display: inline; }}
     .tabcat .linha {{ grid-template-columns: minmax(0, 1.6fr) 1.2fr 1fr; }}
     .tabcat .qtd {{ display: none; }}
+    .cabecalho {{ flex-direction: column; align-items: stretch; gap: .2rem; }}
+    .cabecalho h1 {{ font-size: 2rem; }}
+    .kpis {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+    .kpi .val {{ font-size: 1.15rem; }}
   }}
 </style>
 <div class="cabecalho">
   <h1>Contas em Dia</h1>
-  <p class="sistema">Sistema de Controle Financeiro</p>
-  <p class="slogan">Seus gastos na palma da mão</p>
+  <div><p class="sistema">Sistema de Controle Financeiro</p>
+  <p class="slogan">Seus gastos na palma da mão</p></div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -261,24 +388,27 @@ def _curto(v):
     return f"{a:.0f}"
 
 
-def grafico_mensal(mensal):
+def grafico_mensal(mensal, series=None, altura=380):
     """Entrou e saiu, mês a mês: duas linhas com o valor em cada ponto (o da linha mais alta
-    em cima do ponto, o da mais baixa embaixo) e o nome no fim de cada linha."""
-    longo = mensal.melt(id_vars="Mês", value_vars=["Entradas", "Saídas"], var_name="Tipo",
-                        value_name="Total")
-    longo["Série"] = longo["Tipo"].map({"Entradas": "Entrou", "Saídas": "Saiu"})
+    em cima do ponto, o da mais baixa embaixo) e o nome no fim de cada linha.
+
+    series: (coluna, nome, cor) de cada linha; o padrão é Entradas e Saídas."""
+    series_cfg = series or [("Entradas", "Entrou", COR_ENTRADAS), ("Saídas", "Saiu", COR_SAIDAS)]
+    longo = mensal.melt(id_vars="Mês", value_vars=[c for c, _, _ in series_cfg],
+                        var_name="Tipo", value_name="Total")
+    longo["Série"] = longo["Tipo"].map({c: n for c, n, _ in series_cfg})
     longo["Rótulo"] = longo["Mês"].map(rotulo_mes)
     longo["Valor"] = longo["Total"].map(formatar_reais)
     longo["Texto"] = longo["Total"].map(_curto)
     maior = longo.groupby("Mês")["Total"].transform("max")
     longo["Acima"] = longo["Total"] >= maior
     ordem = [rotulo_mes(m) for m in mensal["Mês"]]
-    series = ["Entrou", "Saiu"]
+    series = [n for _, n, _ in series_cfg]
     x = alt.X("Rótulo:N", sort=ordem, title=None, axis=alt.Axis(labelAngle=0, labelOverlap=True),
               scale=alt.Scale(padding=0.3))
     y = alt.Y("Total:Q", axis=EIXO_REAIS)
     cor = alt.Color("Série:N", sort=series, legend=None,
-                    scale=alt.Scale(domain=series, range=[COR_ENTRADAS, COR_SAIDAS]))
+                    scale=alt.Scale(domain=series, range=[c for _, _, c in series_cfg]))
     base = alt.Chart(longo).encode(x=x, y=y, color=cor)
     linhas = base.mark_line(strokeWidth=2.5)
     pontos = base.mark_point(filled=True, size=70, opacity=1).encode(
@@ -293,7 +423,7 @@ def grafico_mensal(mensal):
     nomes = alt.Chart(fim).mark_text(align="left", dx=10, fontSize=12, fontWeight="bold",
                                      color=cor_do_texto()).encode(x=x, y=y, text="Série:N")
     return (linhas + pontos + em_cima + embaixo + nomes).properties(
-        width="container", height=380,
+        width="container", height=altura,
         padding={"left": 5, "top": 10, "bottom": 5, "right": 8},
         autosize=alt.AutoSizeParams(type="fit", contains="padding"))
 
@@ -586,9 +716,10 @@ TIPOS_EXTRATO = ["csv", "xlsx", "xls", "excel", "pdf", "ofx", "zip"]
 st.session_state.setdefault("arquivos_principal", [])
 
 with st.sidebar:
-    st.header("📁 Importar Dados")
+    st.markdown('<div class="marca"><b>CONTAS EM DIA</b><span>CONTROLE FINANCEIRO</span></div>'
+                '<p class="secao">📁 Seus extratos</p>', unsafe_allow_html=True)
     arquivos_lateral = st.file_uploader(
-        "Escolha seus extratos",
+        "Escolha seus extratos", label_visibility="collapsed",
         type=TIPOS_EXTRATO,
         accept_multiple_files=True,
         help="Extratos em CSV, Excel ou OFX de qualquer banco, de vários meses e contas. "
@@ -599,17 +730,19 @@ with st.sidebar:
     if st.session_state["arquivos_principal"]:
         st.caption(f"📎 {len(st.session_state['arquivos_principal'])} arquivo(s) enviado(s) "
                    "pela tela principal")
-        if st.button("Remover esses arquivos"):
+        if st.button("Remover esses arquivos", type="tertiary"):
             st.session_state["arquivos_principal"] = []
             st.rerun()
     arquivos = list(arquivos_lateral or []) + st.session_state["arquivos_principal"]
-    st.caption("🌓 Tema claro ou escuro: menu ⋮ no canto superior direito → Settings")
     nome_titular = st.text_input(
-        "Seu nome (opcional)",
-        placeholder="Ex: Maria Silva",
+        "Seu nome (opcional)", label_visibility="collapsed",
+        placeholder="Seu nome (opcional)",
         help="Pix e TED para você mesmo em outro banco viram transferência entre "
              "contas, e não gasto. Use nome e sobrenome como aparecem no extrato."
     )
+    # O menu de navegação é preenchido depois de ler os extratos (as páginas dependem do
+    # Plus), mas fica aqui, acima da seção Plus
+    menu_lateral = st.container()
 
 # ============================================================================
 # ÁREA PLUS (código de acesso)
@@ -733,8 +866,8 @@ def secao_ajuda():
          "fechar. O que fica guardado são as classificações que você salvar (nome da empresa → "
          "categoria), sem valores nem datas."),
         ("Uma categoria está errada.",
-         "Na área aberta, a aba **🔎 Consultar CNPJ** ajuda com Pix para empresas. No Plus, a "
-         "aba **⭐ Classificar** corrige qualquer fornecedor e o app lembra nas próximas vezes."),
+         "Na área aberta, a página **🔎 Consultar CNPJ** ajuda com Pix para empresas. No Plus, a "
+         "página **⭐ Classificar** corrige qualquer fornecedor e o app lembra nas próximas vezes."),
         ("Como funciona o código Plus?",
          "Depois do pagamento, você recebe um código pelo WhatsApp ou e-mail. No menu lateral, "
          "abra **⭐ Tenho um código Plus**, cole o código e digite o nome completo do titular, "
@@ -767,7 +900,7 @@ if st.session_state["plus"] and st.session_state.get("plus_ate") \
                                       f"{st.session_state['plus_ate']:%d/%m/%Y}.")
 
 with st.sidebar:
-    st.divider()
+    st.markdown('<p class="secao">⭐ Plus</p>', unsafe_allow_html=True)
     if st.session_state["plus"]:
         ate = st.session_state.get("plus_ate")
         st.markdown("⭐ **Plus ativo**" + (f" até {ate:%d/%m/%Y}" if ate else ""))
@@ -925,7 +1058,7 @@ def botoes_flutuantes():
 
 
 # O conteúdo vai num container e o rodapé é desenhado logo depois: assim ele aparece
-# embaixo de qualquer aba, e também quando a tela para antes (st.stop)
+# embaixo de qualquer página, e também quando a tela para antes (st.stop)
 corpo = st.container()
 rodape()
 botoes_flutuantes()
@@ -946,7 +1079,7 @@ with corpo:
         1. No app ou no site do banco, baixe o **extrato** da conta (CSV, Excel ou OFX) ou
            a **fatura do cartão**. Pode enviar vários meses e várias contas de uma vez.
         2. Arraste os arquivos para a área acima, ou clique em **Escolher arquivos**.
-           Também dá para usar o menu lateral (📁 Importar Dados).
+           Também dá para usar o menu lateral (📁 Seus extratos).
         3. Em PDF: extratos da conta Nubank, Sicredi e XP, e fatura do cartão BB. Se mandar
            o mesmo mês em mais de um formato, as repetições são descartadas
         4. Pronto: veja o resumo, o mês a mês e as transações já separadas por categoria
@@ -958,6 +1091,8 @@ with corpo:
             secao_ajuda()
         st.stop()
 
+    # Barra do topo (período e filtros), preenchida depois de ler os extratos
+    barra_topo = st.container()
     tabelas = []
     leitura = []
     titulares = []   # nome do titular, quando o PDF traz (Sicredi, XP)
@@ -1017,35 +1152,49 @@ with corpo:
             return opcoes.index(coluna) if coluna in opcoes else 0
 
         completo = sugestao["data"] and sugestao["descricao"] and (sugestao["valor"] or sugestao["credito"])
-        nomes = ", ".join(r["nome"] for r in grupo)
-        with st.expander(f"⚙️ Colunas — {grupo[0]['conta']} ({len(grupo)} arquivo(s))",
-                         expanded=not completo):
-            st.caption(f"Identificadas automaticamente. Ajuste se algo estiver errado. Arquivos: {nomes}")
-            c1, c2 = st.columns(2)
-            col_data = c1.selectbox("Data", opcoes, index=indice(sugestao["data"]), key=f"data{n}")
-            col_desc = c2.multiselect("Descrição", list(cols), default=sugestao["descricao"],
-                                      help="Pode escolher mais de uma coluna; o texto é juntado.",
-                                      key=f"desc{n}")
-            modo = st.radio("Como o banco mostra os valores?",
-                            ["Uma coluna de valor (negativo = saída)",
-                             "Colunas separadas de crédito e débito"],
-                            index=1 if sugestao["credito"] else 0, horizontal=True, key=f"modo{n}")
-            if modo.startswith("Uma"):
-                col_valor = st.selectbox("Valor", opcoes, index=indice(sugestao["valor"]), key=f"valor{n}")
-                col_cred = col_deb = "—"
-            else:
-                c3, c4 = st.columns(2)
-                col_cred = c3.selectbox("Crédito (entradas)", opcoes,
-                                        index=indice(sugestao["credito"]), key=f"cred{n}")
-                col_deb = c4.selectbox("Débito (saídas)", opcoes,
-                                       index=indice(sugestao["debito"]), key=f"deb{n}")
-                col_valor = "—"
-            st.dataframe(bruto0.head(5), width="stretch")
-
-        colunas = {k: (None if v == "—" else v) for k, v in
-                   {"data": col_data, "valor": col_valor,
-                    "credito": col_cred, "debito": col_deb}.items()}
-        colunas["descricao"] = col_desc
+        colunas = {"data": sugestao["data"], "descricao": sugestao["descricao"],
+                   "valor": None if sugestao["credito"] else sugestao["valor"],
+                   "credito": sugestao["credito"], "debito": sugestao["debito"]}
+        if completo:
+            try:
+                montar_transacoes(bruto0, colunas, grupo[0]["conta"])
+            except ValueError:
+                completo = False
+        # Só pede ajuda quando as colunas não foram reconhecidas
+        if not completo:
+            nomes = ", ".join(r["nome"] for r in grupo)
+            st.warning(f"Não reconhecemos todas as colunas de {nomes}. Indique abaixo onde "
+                       "estão a data, a descrição e o valor.", icon="⚙️")
+            with st.expander(f"⚙️ Colunas — {grupo[0]['conta']} ({len(grupo)} arquivo(s))",
+                             expanded=True):
+                c1, c2 = st.columns(2)
+                col_data = c1.selectbox("Data", opcoes, index=indice(sugestao["data"]),
+                                        key=f"data{n}")
+                col_desc = c2.multiselect("Descrição", list(cols),
+                                          default=sugestao["descricao"],
+                                          help="Pode escolher mais de uma coluna; o texto é "
+                                               "juntado.", key=f"desc{n}")
+                modo = st.radio("Como o banco mostra os valores?",
+                                ["Uma coluna de valor (negativo = saída)",
+                                 "Colunas separadas de crédito e débito"],
+                                index=1 if sugestao["credito"] else 0, horizontal=True,
+                                key=f"modo{n}")
+                if modo.startswith("Uma"):
+                    col_valor = st.selectbox("Valor", opcoes, index=indice(sugestao["valor"]),
+                                             key=f"valor{n}")
+                    col_cred = col_deb = "—"
+                else:
+                    c3, c4 = st.columns(2)
+                    col_cred = c3.selectbox("Crédito (entradas)", opcoes,
+                                            index=indice(sugestao["credito"]), key=f"cred{n}")
+                    col_deb = c4.selectbox("Débito (saídas)", opcoes,
+                                           index=indice(sugestao["debito"]), key=f"deb{n}")
+                    col_valor = "—"
+                st.dataframe(bruto0.head(5), width="stretch")
+            colunas = {k: (None if v == "—" else v) for k, v in
+                       {"data": col_data, "valor": col_valor,
+                        "credito": col_cred, "debito": col_deb}.items()}
+            colunas["descricao"] = col_desc
         for r in grupo:
             try:
                 t = montar_transacoes(r["bruto"], colunas, r["conta"])
@@ -1083,22 +1232,46 @@ with corpo:
                           st.session_state["regras_pessoais"])
     todos = aplicar_regras(todos, regras_todas)
 
-    with st.expander(f"📂 Arquivos lidos ({len(arquivos)})",
-                     expanded=any("Colunas" in x["Situação"] for x in leitura)):
-        st.dataframe(pd.DataFrame(leitura), hide_index=True, width="stretch")
-
     if todos.empty:
         st.warning("Nenhuma transação encontrada. Confira os arquivos e as colunas acima.")
+        st.dataframe(pd.DataFrame(leitura), hide_index=True, width="stretch")
         st.stop()
 
-    # Filtros de conta e período
-    with st.sidebar:
-        st.divider()
-        contas = sorted(todos["Conta"].unique())
-        filtro_contas = st.multiselect("Contas", contas, default=contas)
-        inicio, fim = todos["Data"].min().date(), todos["Data"].max().date()
-        periodo_sel = st.date_input("Período", value=(inicio, fim), min_value=inicio,
-                                    max_value=fim, format="DD/MM/YYYY")
+    # Menu lateral: as páginas da área aberta ou do Plus
+    PAINEL = "📊 Painel"
+    PAGINAS = [PAINEL, "📅 Mês a mês", "📋 Transações", "📥 Download"]
+    PAGINAS += (["⭐ Relatório", "⭐ Imposto de Renda", "⭐ Fixos e parcelas",
+                 "⭐ Saúde financeira", "⭐ Classificar"] if PLUS
+                else ["🔎 Consultar CNPJ", "⭐ Área Plus"]) + ["❓ Ajuda"]
+    with menu_lateral:
+        st.markdown('<p class="secao">🧭 Navegação</p>', unsafe_allow_html=True)
+        with st.container(key="menu"):
+            pagina = st.radio("Navegação", PAGINAS, label_visibility="collapsed",
+                              key="pagina_plus" if PLUS else "pagina_livre",
+                              persist_state="page", width="stretch")
+
+    # Barra do topo: título da página (ou as visões do Painel), período e filtros
+    contas = sorted(todos["Conta"].unique())
+    inicio, fim = todos["Data"].min().date(), todos["Data"].max().date()
+    with barra_topo:
+        t1, t2, t3, t4 = st.columns([1.2, 2.2, 1.5, .6], vertical_alignment="center")
+        if pagina == PAINEL:
+            with t2, st.container(key="visoes"):
+                visao = st.segmented_control("Visão", ["Resumo", "Entradas", "Saídas"],
+                                             default="Resumo", required=True,
+                                             label_visibility="collapsed", key="visao",
+                                             persist_state="page")
+        else:
+            t1.markdown(f'<p class="titulo-pagina">{escape(pagina)}</p>', unsafe_allow_html=True)
+        with t3, st.container(key="periodo"):
+            periodo_sel = st.date_input("📅 Período", value=(inicio, fim), min_value=inicio,
+                                        max_value=fim, format="DD/MM/YYYY",
+                                        label_visibility="collapsed", key="periodo_sel",
+                                        persist_state="page")
+        with t4, st.container(key="filtros_btn"):
+            with st.popover("⚙ Filtros", width="stretch"):
+                filtro_contas = st.multiselect("Contas", contas, default=contas,
+                                               key="filtro_contas", persist_state="page")
 
     df = todos[todos["Conta"].isin(filtro_contas)]
     if isinstance(periodo_sel, tuple) and len(periodo_sel) == 2:
@@ -1109,27 +1282,37 @@ with corpo:
 
     internas = df[df["Tipo"] == "Interna"]
     periodo = f"{df['Data'].min():%d/%m/%Y} a {df['Data'].max():%d/%m/%Y}"
-    st.success(f"✅ {len(df) - len(internas)} transações de {periodo} "
-               f"({len(internas)} movimentações internas à parte)")
+    with st.container(key="faixa_ok"):
+        f1, f2 = st.columns([4, 1.3], vertical_alignment="center")
+        f1.markdown(f"✅ {len(df) - len(internas)} transações de {periodo} "
+                    f"({len(internas)} movimentações internas à parte)")
+        with f2.popover(f"📂 Arquivos lidos ({len(arquivos)})", type="tertiary"):
+            st.dataframe(pd.DataFrame(leitura), hide_index=True, width=620)
+    problemas = [x["Arquivo"] for x in leitura if x["Situação"].startswith("⚠️")]
+    if problemas:
+        st.warning(f"Não foi possível ler: {', '.join(problemas)}. Veja os detalhes em "
+                   "📂 Arquivos lidos.", icon="⚠️")
 
     entradas = df.loc[df["Tipo"] == "Entrada", "Valor"].sum()
     saidas = -df.loc[df["Tipo"] == "Saída", "Valor"].sum()
     aplicado = -internas.loc[internas["Categoria"] == CATEGORIA_APLICACAO, "Valor"].sum()
-
     meses = max(1, df["Mês"].nunique())
-    nomes_abas = ["📊 Resumo", "💰 Entradas", "💸 Saídas", "📅 Mês a Mês", "📋 Transações",
-                  "📥 Download"]
-    nomes_abas += (["⭐ Relatório", "⭐ Imposto de Renda", "⭐ Fixos e parcelas",
-                    "⭐ Saúde financeira", "⭐ Classificar"] if PLUS
-                   else ["🔎 Consultar CNPJ", "⭐ Plus"]) + ["❓ Ajuda"]
-    abas = st.tabs(nomes_abas)
-    tab_resumo, tab_entradas, tab_saidas, tab_mes, tab_transacoes, tab_download = abas[:6]
+    varios_meses = df["Mês"].nunique() > 1
 
     # Entradas agrupadas por tipo (recebido de empresas, de pessoas, salário...)
     df_entradas = df[df["Tipo"] == "Entrada"].assign(
         Categoria=lambda d: d["Subcategoria"].replace("", "Outras entradas"), Subcategoria="")
     tipos_entrada = resumo_categorias(df_entradas, tipo="Entrada")
     cats = resumo_categorias(df)
+
+    # Recorrentes, parcelas e IR olham todo o histórico das contas escolhidas (o filtro
+    # de período cortaria parcelas e meses); a saúde financeira segue o período
+    df_contas = todos[todos["Conta"].isin(filtro_contas)]
+    recorrentes = plus.gastos_recorrentes(df_contas)
+    parcelas, cronograma = plus.parcelas_futuras(df_contas)
+    compromissos = plus.compromissos_mensais(recorrentes)
+    parcelas_proximo = float(cronograma["Valor"].iloc[0]) if not cronograma.empty else 0.0
+    anos_ir = sorted(df_contas["Data"].dt.year.unique(), reverse=True)
 
     def ranking_html(tabela, tipo, n=5):
         """Os n maiores itens com barra de %, para o Resumo."""
@@ -1144,51 +1327,91 @@ with corpo:
                                       resto["Transações"].sum(), resto[pct].sum()))
         return "".join(linhas + ["</div>"])
 
-    # ----------------------------------------------------------------------------
-    with tab_resumo:
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Entradas", formatar_reais(entradas))
-        m2.metric("Saídas", formatar_reais(saidas))
-        m3.metric("Saldo do período", formatar_reais(entradas - saidas))
-        m4.metric("Aplicado (líquido)", formatar_reais(aplicado),
-                  help="Aplicações menos resgates no período (Rende Fácil, caixinhas, fundos...). "
-                       "Não entra em entradas nem saídas.")
+    def cartoes_kpi(itens):
+        """Os 4 cartões do alto: (ícone, título, valor, nota, classe do valor, dica)."""
+        html = ['<div class="kpis">']
+        for icone, titulo, valor, nota, classe, ajuda in itens:
+            html.append(f'<div class="kpi" title="{escape(ajuda)}"><div class="rot">'
+                        f'<span class="ico">{icone}</span>{escape(titulo)}</div>'
+                        f'<div class="val {classe}">{escape(valor)}</div>'
+                        f'<div class="nota">{escape(nota)}</div></div>')
+        st.markdown("".join(html + ["</div>"]), unsafe_allow_html=True)
 
-        # Ranking e, logo abaixo, a evolução mês a mês (as 5 maiores, o resto em "Outros",
-        # e o total), cada um embaixo do seu par
-        varios_meses = df["Mês"].nunique() > 1
-        c1, c2 = st.columns(2)
-        with c1:
-            st.subheader("De onde vem")
-            if tipos_entrada.empty:
-                st.info("Não há entradas no período.")
+    def por_mes(n):
+        return f"{n} {'mês' if n == 1 else 'meses'}"
+
+    def titulo_painel(titulo, tag):
+        st.markdown(f'<div class="titulo-painel">{titulo}<span class="tag">{tag}</span></div>',
+                    unsafe_allow_html=True)
+
+    def painel_ciano(titulo, subtitulo, tabela, tipo, nota, n=8):
+        """Painel em degradê ciano, à direita, com o ranking."""
+        with st.container(key="painel_ciano"):
+            st.markdown(f"### {titulo}")
+            st.markdown(f'<div class="sub-titulo">{subtitulo}</div>', unsafe_allow_html=True)
+            if tabela.empty:
+                st.caption("Nada no período.")
             else:
-                st.markdown(ranking_html(tipos_entrada, "Entrada"), unsafe_allow_html=True)
-        with c2:
-            st.subheader("Para onde vai")
-            if cats.empty:
-                st.info("Não há saídas no período.")
-            else:
-                st.markdown(ranking_html(cats, "Saída"), unsafe_allow_html=True)
-        # Os gráficos numa linha própria: começam na mesma altura, mesmo quando uma lista é
-        # mais comprida que a outra
-        if varios_meses:
-            g1, g2 = st.columns(2)
-            if not tipos_entrada.empty:
-                ent_mes = (df_entradas.groupby(["Mês", "Categoria"], as_index=False)["Valor"]
-                           .sum().rename(columns={"Categoria": "Fornecedor"}))
-                g1.altair_chart(grafico_linhas(ent_mes, "Total", max_series=5, rotulo="Tipo",
-                                               altura=260, largura_nomes=135), width="stretch")
-            if not cats.empty:
-                sai_mes = (df[df["Tipo"] == "Saída"].assign(Valor=lambda d: -d["Valor"])
-                           .groupby(["Mês", "Categoria"], as_index=False)["Valor"].sum()
-                           .rename(columns={"Categoria": "Fornecedor"}))
-                g2.altair_chart(grafico_linhas(sai_mes, "Total", max_series=5,
-                                               rotulo="Categoria", altura=260,
-                                               largura_nomes=135), width="stretch")
-        if varios_meses:
-            dica("Passe o mouse sobre os gráficos para ver os valores de cada mês")
-        dica("Os detalhes, com as fontes e os fornecedores, estão nas abas 💰 Entradas e 💸 Saídas")
+                st.markdown(ranking_html(tabela, tipo, n=n), unsafe_allow_html=True)
+            dica(nota)
+
+    def escolher_categorias(opcoes, nome, rotulo):
+        """Pílulas para escolher as categorias (todas marcadas no início). A chave muda
+        quando as categorias mudam (uma reclassificação), e a escolha recomeça."""
+        chave = f"pilulas_{nome}_{abs(hash(tuple(opcoes)))}"
+        # Marcar/Desmarcar todas mudam o valor pela sessão; aí o default não pode vir junto
+        st.session_state.setdefault(chave, list(opcoes))
+        escolhidas = st.pills(rotulo, opcoes, selection_mode="multi", key=chave,
+                              persist_state="page")
+        with st.container(key="todos_nenhum", horizontal=True, gap="small"):
+            st.button("Marcar todas", key=f"todas_{nome}", type="tertiary",
+                      on_click=lambda: st.session_state.update({chave: list(opcoes)}))
+            st.button("Desmarcar todas", key=f"nenhuma_{nome}", type="tertiary",
+                      on_click=lambda: st.session_state.update({chave: []}))
+        return escolhidas
+
+    todos_meses = sorted(df["Mês"].unique())
+
+    def linha_por_mes(dados, nome, cor):
+        """O total das categorias escolhidas, mês a mês, numa linha só."""
+        mensal = (dados["Valor"].abs().groupby(dados["Mês"]).sum()
+                  .reindex(todos_meses, fill_value=0).rename_axis("Mês").reset_index())
+        st.altair_chart(grafico_mensal(mensal, [("Valor", nome, cor)], altura=300),
+                        width="stretch")
+        dica("Passe o mouse sobre os pontos para ver o valor completo")
+
+    # ----------------------------------------------------------------------------
+    if pagina == PAINEL and visao == "Resumo":
+        esq, dir_ = st.columns([3, 1.3], gap="medium")
+        with esq:
+            saldo = entradas - saidas
+            cartoes_kpi([
+                ("💰", "Entradas", formatar_reais(entradas),
+                 f"média de {formatar_reais(entradas / meses)} por mês", "", ""),
+                ("💸", "Saídas", formatar_reais(saidas),
+                 f"média de {formatar_reais(saidas / meses)} por mês", "", ""),
+                ("⚖️", "Saldo do período", formatar_reais(saldo),
+                 "sobrou no período" if saldo >= 0 else "faltou no período",
+                 "" if saldo >= 0 else "neg", ""),
+                ("🏦", "Aplicado (líquido)", formatar_reais(aplicado), "aplicações menos resgates",
+                 "", "Aplicações menos resgates no período (Rende Fácil, caixinhas, fundos...). "
+                     "Não entra em entradas nem saídas."),
+            ])
+            with st.container(border=True):
+                titulo_painel("Entrou e saiu", "mês a mês")
+                st.altair_chart(grafico_mensal(resumo_mensal(df)), width="stretch")
+                dica("Passe o mouse sobre os pontos para ver o valor completo")
+            with st.container(border=True):
+                titulo_painel("De onde vem", "tipos de entrada")
+                if tipos_entrada.empty:
+                    st.info("Não há entradas no período.")
+                else:
+                    st.markdown(ranking_html(tipos_entrada, "Entrada"), unsafe_allow_html=True)
+                dica("Os detalhes, com quem pagou, estão em Entradas (no alto da página)")
+        with dir_:
+            painel_ciano("Para onde vai", "Maiores categorias de gasto", cats, "Saída",
+                         "Os detalhes, com subcategorias e fornecedores, estão em Saídas "
+                         "(no alto da página)")
 
         if not internas.empty:
             st.subheader("Movimentações internas")
@@ -1202,62 +1425,100 @@ with corpo:
                          hide_index=True, width="stretch")
 
     # ----------------------------------------------------------------------------
-    with tab_entradas:
+    if pagina == PAINEL and visao == "Entradas":
         if tipos_entrada.empty:
             st.info("Não há entradas no período.")
         else:
-            fontes = df_entradas.assign(_k=df_entradas["Fornecedor"].map(chave_fornecedor))
-            por_fonte = fontes.groupby("_k")["Valor"].sum().sort_values(ascending=False)
-            e1, e2, e3, e4 = st.columns(4)
-            e1.metric("Total de entradas", formatar_reais(entradas))
-            e2.metric("Média por mês", formatar_reais(entradas / meses))
-            e3.metric("Fontes diferentes", f"{len(por_fonte)}")
-            e4.metric("Maior fonte", f"{por_fonte.iloc[0] / entradas * 100:.0f}%".replace(".", ","),
-                      help="Quanto das entradas veio de quem mais pagou. Quanto maior, mais "
-                           "você depende de uma fonte só.")
-
-            st.subheader("Entradas por mês")
-            dica("Passe o mouse sobre as barras para ver os valores")
-            st.altair_chart(grafico_entradas_mes(resumo_mensal(df)), width="stretch")
-
-            st.subheader("Entradas por tipo")
-            st.altair_chart(grafico_categorias(tipos_entrada, "Entrada"), width="stretch")
-            dica("Clique num tipo para ver quem mais pagou · nas linhas abertas, o % é sobre "
-                 "o tipo")
-            st.markdown(tabela_categorias_html(tipos_entrada, df_entradas, tipo="Entrada",
-                                               rotulo="Tipo de entrada"),
-                        unsafe_allow_html=True)
+            sel = escolher_categorias(tipos_entrada["Categoria"].tolist(), "entradas",
+                                      "Tipos de entrada")
+            df_e = df_entradas[df_entradas["Categoria"].isin(sel)]
+            if df_e.empty:
+                st.info("Escolha ao menos um tipo de entrada.")
+            else:
+                tipos_sel = resumo_categorias(df_e, tipo="Entrada")
+                total_e = df_e["Valor"].sum()
+                fontes = df_e.assign(_k=df_e["Fornecedor"].map(chave_fornecedor))
+                por_fonte = fontes.groupby("_k")["Valor"].sum().sort_values(ascending=False)
+                esq, dir_ = st.columns([3, 1.3], gap="medium")
+                with esq:
+                    cartoes_kpi([
+                        ("💰", "Total de entradas", formatar_reais(total_e),
+                         "nos tipos escolhidos", "", ""),
+                        ("📅", "Média por mês", formatar_reais(total_e / meses), por_mes(meses),
+                         "", ""),
+                        ("👥", "Fontes diferentes", f"{len(por_fonte)}", "quem pagou", "", ""),
+                        ("🎯", "Maior fonte",
+                         f"{por_fonte.iloc[0] / total_e * 100:.0f}%".replace(".", ","),
+                         "das entradas escolhidas", "ouro",
+                         "Quanto das entradas veio de quem mais pagou. Quanto maior, mais você "
+                         "depende de uma fonte só."),
+                    ])
+                    if varios_meses:
+                        with st.container(border=True):
+                            titulo_painel("Entradas", "por mês")
+                            linha_por_mes(df_e, "Entrou", COR_ENTRADAS)
+                with dir_:
+                    painel_ciano("De onde vem", "Tipos escolhidos", tipos_sel, "Entrada",
+                                 "Clique num tipo, logo abaixo, para ver quem pagou")
+                with st.container(border=True):
+                    titulo_painel("Quem pagou", "por tipo de entrada")
+                    dica("Clique num tipo para ver quem mais pagou · nas linhas abertas, "
+                         "o % é sobre o tipo")
+                    st.markdown(tabela_categorias_html(tipos_sel, df_e, tipo="Entrada",
+                                                       rotulo="Tipo de entrada"),
+                                unsafe_allow_html=True)
 
     # ----------------------------------------------------------------------------
-    with tab_saidas:
+    if pagina == PAINEL and visao == "Saídas":
         if cats.empty:
             st.info("Não há saídas no período.")
         else:
-            s1, s2, s3 = st.columns(3)
-            s1.metric("Total de saídas", formatar_reais(saidas))
-            s2.metric("Média por mês", formatar_reais(saidas / meses))
-            s3.metric(f"Maior categoria ({_pct(cats.iloc[0]['% das saídas'])} das saídas)",
-                      cats.iloc[0]["Categoria"].capitalize())
+            sel = escolher_categorias(cats["Categoria"].tolist(), "saidas", "Categorias")
+            df_s = df[(df["Tipo"] == "Saída") & df["Categoria"].isin(sel)]
+            if df_s.empty:
+                st.info("Escolha ao menos uma categoria.")
+            else:
+                cats_sel = resumo_categorias(df_s)
+                total_s = -df_s["Valor"].sum()
+                fixos_sel = plus.compromissos_mensais(
+                    recorrentes[recorrentes["Categoria"].isin(sel)])
+                esq, dir_ = st.columns([3, 1.3], gap="medium")
+                with esq:
+                    cartoes_kpi([
+                        ("💸", "Total de saídas", formatar_reais(total_s),
+                         "nas categorias escolhidas", "", ""),
+                        ("📅", "Média por mês", formatar_reais(total_s / meses), por_mes(meses),
+                         "", ""),
+                        ("🏠", "Maior categoria", cats_sel.iloc[0]["Categoria"].capitalize(),
+                         f"{_pct(cats_sel.iloc[0]['% das saídas'])} das escolhidas", "ouro", ""),
+                        ("🔁", "Contas que se repetem", formatar_reais(fixos_sel), "por mês", "",
+                         "Assinaturas, mensalidades e contas mensais ainda ativas, nas "
+                         "categorias escolhidas."),
+                    ])
+                    if varios_meses:
+                        with st.container(border=True):
+                            titulo_painel("Saídas", "por mês")
+                            linha_por_mes(df_s, "Saiu", COR_SAIDAS)
+                with dir_:
+                    painel_ciano("Para onde vai", "Categorias escolhidas", cats_sel, "Saída",
+                                 "Clique numa categoria, logo abaixo, para abrir os fornecedores")
+                with st.container(border=True):
+                    titulo_painel("Para quem foi", "categoria → subcategoria → fornecedor")
+                    dica("Clique numa categoria para abrir as subcategorias e os maiores "
+                         "fornecedores · nas linhas abertas, o % é sobre o grupo de cima")
+                    st.markdown(tabela_categorias_html(cats_sel, df_s),
+                                unsafe_allow_html=True)
 
-            st.subheader("Saídas por categoria")
-            dica("Passe o mouse sobre as barras para ver os valores")
-            st.altair_chart(grafico_categorias(cats), width="stretch")
-            dica("Clique numa categoria para abrir as subcategorias e os maiores fornecedores · "
-                 "nas linhas abertas, o % é sobre o grupo de cima")
-            st.markdown(tabela_categorias_html(cats, df), unsafe_allow_html=True)
-
-            so_saidas = df[df["Tipo"] == "Saída"]
-            sem_id = [nao_identificado(c, sc) for c, sc in
-                      zip(so_saidas["Categoria"], so_saidas["Subcategoria"])]
-            pct_sem_id = so_saidas.loc[sem_id, "Valor"].sum() / so_saidas["Valor"].sum() * 100 \
-                if so_saidas["Valor"].sum() else 0
-            if pct_sem_id > 20:
-                st.caption(f"ℹ️ {pct_sem_id:.0f}% das saídas não foram identificadas. "
-                           + ("Classifique na aba ⭐ Classificar." if PLUS else
-                              "Veja a aba 🔎 Consultar CNPJ."))
+                sem_id = [nao_identificado(c, sc) for c, sc in
+                          zip(df_s["Categoria"], df_s["Subcategoria"])]
+                pct_sem_id = df_s.loc[sem_id, "Valor"].sum() / df_s["Valor"].sum() * 100
+                if pct_sem_id > 20:
+                    st.caption(f"ℹ️ {pct_sem_id:.0f}% das saídas não foram identificadas. "
+                               + ("Classifique em ⭐ Classificar." if PLUS else
+                                  "Veja 🔎 Consultar CNPJ, no menu ao lado."))
 
     # ----------------------------------------------------------------------------
-    with tab_mes:
+    if pagina == "📅 Mês a mês":
         mensal = resumo_mensal(df)
         st.subheader("Entrou e saiu, mês a mês")
         dica("Passe o mouse sobre os pontos para ver o valor completo")
@@ -1276,7 +1537,7 @@ with corpo:
             st.dataframe(por_mes.map(formatar_reais), width="stretch")
 
     # ----------------------------------------------------------------------------
-    with tab_transacoes:
+    if pagina == "📋 Transações":
         f1, f2, f3 = st.columns([2, 2, 1])
         filtro_cat = f1.multiselect("Categoria", sorted(df["Categoria"].unique()))
         busca = f2.text_input("Buscar na descrição")
@@ -1299,7 +1560,7 @@ with corpo:
         )
 
     # ----------------------------------------------------------------------------
-    with tab_download:
+    if pagina == "📥 Download":
         st.subheader("Exportar")
         exportar = df.copy()
         exportar["Data"] = exportar["Data"].dt.strftime("%d/%m/%Y")
@@ -1332,15 +1593,6 @@ with corpo:
     # Pendentes: não identificados e transferências sem outra categoria
     saidas_forn["pendente"] = [c == "TRANSFERÊNCIA" or nao_identificado(c, sc) for c, sc in
                                zip(saidas_forn["Categoria"], saidas_forn["Subcategoria"])]
-    # Recorrentes, parcelas e IR olham todo o histórico das contas escolhidas (o filtro
-    # de período cortaria parcelas e meses); a saúde financeira segue o período
-    df_contas = todos[todos["Conta"].isin(filtro_contas)]
-    recorrentes = plus.gastos_recorrentes(df_contas)
-    parcelas, cronograma = plus.parcelas_futuras(df_contas)
-    compromissos = plus.compromissos_mensais(recorrentes)
-    parcelas_proximo = float(cronograma["Valor"].iloc[0]) if not cronograma.empty else 0.0
-    anos_ir = sorted(df_contas["Data"].dt.year.unique(), reverse=True)
-
     def subcategoria_valida(categoria, sub):
         validas = subcategorias_de(categoria)
         return sub if sub in validas else validas[-1]
@@ -1424,11 +1676,10 @@ with corpo:
         st.rerun()
 
     if not PLUS:
-        tab_cnpj, tab_vitrine, tab_ajuda = abas[6:]
-        with tab_ajuda:
+        if pagina == "❓ Ajuda":
             secao_ajuda()
 
-        with tab_cnpj:
+        if pagina == "🔎 Consultar CNPJ":
             st.subheader("Consultar CNPJ na Receita")
             st.markdown("Pix feitos a empresas trazem o CNPJ na descrição. O app consulta a "
                         "**atividade principal** da empresa nos dados públicos da Receita "
@@ -1438,7 +1689,7 @@ with corpo:
                        "Para corrigir qualquer fornecedor e o app lembrar nas próximas vezes, "
                        "use a versão ⭐ Plus.")
 
-        with tab_vitrine:
+        if pagina == "⭐ Área Plus":
             st.markdown('<div class="vitrine"><h3>⭐ Contas em Dia Plus</h3>'
                         'Análises prontas a partir dos mesmos extratos. Seus extratos e '
                         'relatórios também não ficam guardados: ao fechar o app, tudo é apagado '
@@ -1488,12 +1739,11 @@ with corpo:
                 st.caption("As assinaturas abrem em breve.")
         st.stop()
 
-    tab_relatorio, tab_ir, tab_recorrentes, tab_saude, tab_classificar, tab_ajuda = abas[6:]
-    with tab_ajuda:
+    if pagina == "❓ Ajuda":
         secao_ajuda()
 
     # ----------------------------------------------------------------------------
-    with tab_relatorio:
+    if pagina == "⭐ Relatório":
         st.subheader("📄 Relatório Contas em Dia")
         st.markdown("""
         Um PDF de 4 páginas, para ler com calma, imprimir ou levar ao seu especialista:
@@ -1505,7 +1755,7 @@ with corpo:
            que falta enviar para o relatório ficar mais completo
         """)
         st.caption(f"Usa as contas e o período escolhidos no menu lateral ({periodo}). A reserva "
-                   "de emergência usa o valor informado na aba ⭐ Saúde financeira.")
+                   "de emergência usa o valor informado na página ⭐ Saúde financeira.")
         def pdf_do_relatorio(t=df, guardado=st.session_state.get("guardado") or None):
             # Só roda no clique: o PDF é montado na hora e entregue para download
             return relatorio.gerar_pdf(relatorio.montar_relatorio(t, guardado=guardado))
@@ -1516,7 +1766,7 @@ with corpo:
         st.caption("🔒 O relatório é montado na hora do clique, na memória, e não fica guardado.")
 
     # ----------------------------------------------------------------------------
-    with tab_ir:
+    if pagina == "⭐ Imposto de Renda":
         if not anos_ir:
             st.info("Não há transações.")
         else:
@@ -1578,7 +1828,7 @@ with corpo:
                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     # ----------------------------------------------------------------------------
-    with tab_recorrentes:
+    if pagina == "⭐ Fixos e parcelas":
         p1, p2, p3 = st.columns(3)
         p1.metric("Contas que se repetem, por mês", formatar_reais(compromissos),
                   help="Valor fixo e contas mensais ainda ativas.")
@@ -1631,7 +1881,7 @@ with corpo:
                                  "Por mês", help="Média por mês.")})
 
     # ----------------------------------------------------------------------------
-    with tab_saude:
+    if pagina == "⭐ Saúde financeira":
         guardado = st.number_input(
             "Quanto você tem guardado hoje, em reais? (opcional)", min_value=0, step=1000,
             key="guardado",
@@ -1660,11 +1910,11 @@ with corpo:
                 st.link_button("💬 Falar com um especialista", LINK_CONSULTORIA, type="primary")
 
     # ----------------------------------------------------------------------------
-    with tab_classificar:
+    if pagina == "⭐ Classificar":
         if st.session_state.get("aviso_regras"):
             st.success(st.session_state.pop("aviso_regras"), icon="✅")
 
-        with st.expander("❓ Como funciona esta aba", expanded=True):
+        with st.expander("❓ Como funciona esta página", expanded=True):
             st.markdown("""
             Aqui **você mesmo** corrige a categoria dos gastos — direto na tabela. O app
             aprende e, nos próximos extratos, já classifica esse fornecedor sozinho.

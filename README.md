@@ -9,12 +9,12 @@ Um aplicativo web que automatiza a categorização de extratos bancários e gera
 ✅ Movimentações internas - Aplicação/resgate automático (BB Rende Fácil, caixinhas Nubank), transferência entre suas contas e pagamento de fatura não contam como entrada nem saída  
 ✅ Identificação automática das colunas - Data, descrição, valor ou crédito/débito (ajustável na tela)  
 ✅ Categorização Automática - 11 categorias de saída + RECEITA para entradas  
-✅ Resumo em R$ - Entradas, saídas e saldo; "de onde vem" e "para onde vai" lado a lado, e a evolução mês a mês em linhas (5 maiores, o resto em "Outros", e o total)  
+✅ Painel - Resumo (entradas, saídas, saldo e aplicado; entrou e saiu mês a mês; "de onde vem" e "para onde vai"), Entradas e Saídas com escolha das categorias e detalhe por categoria → subcategoria → fornecedor/cliente  
 ✅ Entradas - Por mês e por tipo (recebido de empresas, de pessoas, salário, rendimentos, estornos), com as fontes que mais pagaram  
 ✅ Saídas - Por categoria, subcategoria e fornecedor  
 ✅ Subcategorias e fornecedores - Clique numa categoria para abrir, na própria linha, as subcategorias e os 10 maiores fornecedores de cada uma (o resto em "Outros fornecedores")  
 ✅ Mês a Mês - Entradas × saídas e categorias por mês  
-✅ Tema claro ou escuro - Azul-marinho, dourado e branco-osso; troque em ⋮ → Settings (por padrão segue o aparelho)  
+✅ Tema escuro (padrão) ou claro - Azul-marinho, ciano, dourado e branco-osso; troque em ⋮ no canto superior direito  
 ✅ Exportação - CSV (padrão Excel brasileiro) ou XLSX com abas de resumo  
 ✅ Filtros - Por conta, período, categoria e busca na descrição  
 ✅ Consultar CNPJ - Pix para empresas: consulta a atividade na Receita (dados públicos) e sugere a categoria pelo CNAE; vale até fechar o app
@@ -83,7 +83,7 @@ O código só funciona com o nome do titular, e o Plus é bloqueado quando um ex
 mostra outro titular. Não troque a `PLUS_CHAVE` depois de vender: os códigos deixariam de valer.
 
 🏷️ Regras compartilhadas (o app lembra)
-Na aba "⭐ Classificar" você corrige a categoria de um fornecedor e o app passa a usar essa
+Na página "⭐ Classificar" você corrige a categoria de um fornecedor e o app passa a usar essa
 categoria em todos os lançamentos dele, nos próximos extratos também. Fornecedores com CNPJ
 no extrato podem ser consultados na Receita Federal (BrasilAPI, gratuita): o app sugere a
 categoria pelo CNAE principal e você confirma antes de aplicar.
@@ -91,7 +91,7 @@ categoria pelo CNAE principal e você confirma antes de aplicar.
 - **Empresas** (compra no cartão, boleto, débito ou CNPJ) vão para `regras/regras_fornecedores.csv`,
   compartilhado por todos que usam o app.
 - **Pix para pessoas** ficam só nas suas regras pessoais, para não expor nomes de ninguém
-  (o repositório é público). Para guardar de vez, cole-as no segredo `REGRAS_PESSOAIS` (a aba
+  (o repositório é público). Para guardar de vez, cole-as no segredo `REGRAS_PESSOAIS` (a página
   Classificar gera o texto pronto); elas passam a valer sempre, mas não são exibidas no app.
 
 Para as regras compartilhadas serem gravadas de vez a partir do Streamlit Cloud:
