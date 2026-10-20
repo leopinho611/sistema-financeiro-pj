@@ -251,28 +251,67 @@ def grafico_categorias(cats, tipo="Saída"):
     )
 
 
+def _curto(v):
+    """Valor curto para rótulo: 850 / 7,3 mil / 12 mil (com sinal)."""
+    sinal = "-" if v < 0 else "+"
+    a = abs(v)
+    if a >= 10000:
+        return f"{sinal}{a / 1000:.0f} mil"
+    if a >= 1000:
+        return f"{sinal}{a / 1000:.1f} mil".replace(".", ",")
+    return f"{sinal}{a:.0f}"
+
+
 def grafico_mensal(mensal):
-    longo = mensal.melt(id_vars="Mês", value_vars=["Entradas", "Saídas"],
-                        var_name="Tipo", value_name="Total")
-    longo["Rótulo"] = longo["Mês"].map(rotulo_mes)
-    longo["Valor"] = longo["Total"].map(formatar_reais)
-    ordem = [rotulo_mes(m) for m in mensal["Mês"]]
-    return (
-        alt.Chart(longo)
-        .mark_bar(cornerRadiusEnd=4)
-        .encode(
-            x=alt.X("Rótulo:N", sort=ordem, title=None, axis=alt.Axis(labelAngle=0)),
-            xOffset=alt.XOffset("Tipo:N", sort=["Entradas", "Saídas"]),
-            y=alt.Y("Total:Q", axis=EIXO_REAIS),
-            color=alt.Color("Tipo:N", sort=["Entradas", "Saídas"],
-                            scale=alt.Scale(domain=["Entradas", "Saídas"],
-                                            range=[COR_ENTRADAS, COR_SAIDAS]),
-                            legend=alt.Legend(title=None, orient="top")),
-            tooltip=[alt.Tooltip("Rótulo:N", title="Mês"), alt.Tooltip("Tipo:N"),
-                     alt.Tooltip("Valor:N", title="Total")],
-        )
-        .properties(height=320)
-    )
+    """Cascata mês a mês com duas barras por mês: a entrada sobe (azul) e a saída desce
+    (dourado), a partir de onde o mês anterior terminou; a última barra é o acumulado."""
+    linhas, nivel = [], 0.0
+    for _, m in mensal.iterrows():
+        rot = rotulo_mes(m["Mês"])
+        topo = nivel + m["Entradas"]
+        fim = topo - m["Saídas"]
+        comum = {"Rótulo": rot, "Entradas": formatar_reais(m["Entradas"]),
+                 "Saídas": formatar_reais(m["Saídas"]),
+                 "Saldo": formatar_reais(m["Entradas"] - m["Saídas"]),
+                 "Acumulado": formatar_reais(fim)}
+        linhas.append({**comum, "Barra": "Entrou", "Cor": "Entrou", "Base": nivel, "Topo": topo,
+                       "Texto": _curto(m["Entradas"])})
+        linhas.append({**comum, "Barra": "Saiu", "Cor": "Saiu", "Base": fim, "Topo": topo,
+                       "Texto": _curto(-m["Saídas"])})
+        nivel = fim
+    total = {"Rótulo": "Acumulado", "Entradas": formatar_reais(mensal["Entradas"].sum()),
+             "Saídas": formatar_reais(mensal["Saídas"].sum()), "Saldo": formatar_reais(nivel),
+             "Acumulado": formatar_reais(nivel), "Cor": "Acumulado do período",
+             "Base": min(0.0, nivel), "Topo": max(0.0, nivel)}
+    dados = pd.DataFrame(linhas)
+    # O acumulado vai numa camada própria, sem o deslocamento dos meses: uma barra só, larga
+    acumulado = pd.DataFrame([{**total, "Texto": _curto(nivel)}])
+    ordem = list(dict.fromkeys(dados["Rótulo"])) + ["Acumulado"]
+    cores = ["Entrou", "Saiu", "Acumulado do período"]
+    x = alt.X("Rótulo:N", sort=ordem, title=None, axis=alt.Axis(labelAngle=0),
+              scale=alt.Scale(paddingInner=0.25, paddingOuter=0.1))
+    desloc = alt.XOffset("Barra:N", sort=["Entrou", "Saiu"],
+                         scale=alt.Scale(paddingInner=0.08))
+    cor = alt.Color("Cor:N", sort=cores,
+                    scale=alt.Scale(domain=cores, range=[COR_ENTRADAS, COR_SAIDAS, "#8c8c8c"]),
+                    legend=alt.Legend(title=None, orient="top"))
+    dica_ = [alt.Tooltip("Rótulo:N", title="Mês"), alt.Tooltip("Entradas:N"),
+             alt.Tooltip("Saídas:N"), alt.Tooltip("Saldo:N", title="Saldo do mês"),
+             alt.Tooltip("Acumulado:N", title="Acumulado até aqui")]
+    y = alt.Y("Base:Q", axis=EIXO_REAIS, title=None)
+    texto = dict(baseline="bottom", dy=-3, fontSize=10, fontWeight="bold",
+                 color=cor_do_texto())
+    barras = alt.Chart(dados).mark_bar(cornerRadius=2).encode(
+        x=x, xOffset=desloc, y=y, y2="Topo:Q", color=cor, tooltip=dica_)
+    barra_total = alt.Chart(acumulado).mark_bar(cornerRadius=2).encode(
+        x=x, y=y, y2="Topo:Q", color=cor, tooltip=dica_)
+    rotulos = (alt.Chart(dados).mark_text(**texto).encode(x=x, xOffset=desloc, y="Topo:Q",
+                                                           text="Texto:N")
+               + alt.Chart(acumulado).mark_text(**texto).encode(x=x, y="Topo:Q",
+                                                                 text="Texto:N"))
+    zero = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color="#8c8c8c", strokeWidth=0.8) \
+        .encode(y="y:Q")
+    return (zero + barras + barra_total + rotulos).properties(height=360)
 
 
 def _pct(v):
@@ -1236,8 +1275,11 @@ with corpo:
     # ----------------------------------------------------------------------------
     with tab_mes:
         mensal = resumo_mensal(df)
-        st.subheader("Entradas × Saídas por mês")
-        dica("Passe o mouse sobre as barras para ver os valores")
+        st.subheader("Quanto sobrou ou faltou em cada mês")
+        st.caption("Em cada mês, a barra azul sobe com o que entrou e a dourada desce com o "
+                   "que saiu, a partir de onde o mês anterior terminou. A última mostra o "
+                   "acumulado do período.")
+        dica("Passe o mouse sobre as barras para ver entradas, saídas e o acumulado")
         st.altair_chart(grafico_mensal(mensal), width="stretch")
         st.dataframe(tabela_em_reais(mensal.assign(Mês=mensal["Mês"].map(rotulo_mes)),
                                      ["Entradas", "Saídas", "Saldo"]),
@@ -1474,11 +1516,12 @@ with corpo:
         st.subheader("📄 Relatório Contas em Dia")
         st.markdown("""
         Um PDF de 4 páginas, para ler com calma, imprimir ou levar ao seu especialista:
-        1. **Seu dinheiro em uma página** — nota geral, quanto entrou e saiu, destaques e o
-           mês a mês
+        1. **Seu dinheiro em uma página** — nota geral, quanto entrou e saiu, destaques, o mês
+           a mês em cascata e as aplicações
         2. **Para onde foi o dinheiro** — categorias, subcategorias e maiores gastos
         3. **O que já está comprometido** — próximos 3 meses, contas que se repetem e parcelas
-        4. **Atenção, imposto e próximos passos** — indicadores, prévia do IR e sugestões
+        4. **Atenção, imposto e próximos passos** — indicadores, prévia do IR, sugestões e o
+           que falta enviar para o relatório ficar mais completo
         """)
         st.caption(f"Usa as contas e o período escolhidos no menu lateral ({periodo}). A reserva "
                    "de emergência usa o valor informado na aba ⭐ Saúde financeira.")

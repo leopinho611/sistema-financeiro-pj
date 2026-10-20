@@ -12,6 +12,7 @@ Nada é guardado: o PDF é gerado na memória e entregue para download.
 """
 
 import io
+import math
 import re
 from datetime import datetime
 
@@ -27,7 +28,7 @@ from reportlab.platypus import (KeepTogether, PageBreak, Paragraph, SimpleDocTem
                                 Table, TableStyle)
 
 import plus
-from financeiro import (CATEGORIA_CARTAO, chave_fornecedor, formatar_reais, nao_identificado,
+from financeiro import (CATEGORIA_APLICACAO, CATEGORIA_CARTAO, chave_fornecedor, formatar_reais, nao_identificado,
                         normalizar, resumo_categorias, resumo_mensal)
 
 CATEGORIAS_VARIAVEIS = ["ALIMENTAÇÃO", "SHOPPING", "LAZER", "TRANSPORTE", "ASSINATURAS"]
@@ -105,7 +106,8 @@ def qualidade_dos_dados(t):
     return problemas
 
 
-def _destaques(t, mensal, variacao, comprometido_mes, media_saidas, qualidade, n=3):
+def _destaques(t, mensal, variacao, comprometido_mes, media_saidas, qualidade, n=3,
+               juros=0.0, aplicacoes=None, entradas=0.0):
     """Os destaques mais relevantes deste caso, do mais para o menos importante.
 
     Cada candidato ganha uma nota pelo tamanho do efeito; frases com valores pequenos
@@ -114,6 +116,26 @@ def _destaques(t, mensal, variacao, comprometido_mes, media_saidas, qualidade, n
     """
     s = t[t["Tipo"] == "Saída"].assign(V=lambda d: -d["Valor"])
     candidatos = []   # (nota, frase)
+
+    if juros >= 50:
+        candidatos.append((85 + min(15, juros / max(media_saidas, 1) * 100),
+            f"<b>{formatar_reais(juros)} foram para juros, IOF e encargos</b> no período. É "
+            "dinheiro que não compra nada: se houver rotativo do cartão ou cheque especial, "
+            "quitar essa dívida primeiro costuma ser o melhor investimento."))
+    if aplicacoes and aplicacoes["tem"] and entradas > 0:
+        liq = aplicacoes["liquido"]
+        if liq < 0 and -liq >= 0.05 * entradas:
+            candidatos.append((75,
+                f"<b>Você resgatou {formatar_reais(-liq)} a mais do que aplicou.</b> As "
+                f"aplicações ajudaram a cobrir gastos em {aplicacoes['meses_resgatando']} "
+                f"de {aplicacoes['meses']} meses, e a reserva diminuiu."))
+        # Acima de 80% do que entrou não é poupança plausível: há aplicação automática ou
+        # dinheiro vindo de outras contas no meio, e o % enganaria
+        elif liq > 0 and 0.05 <= liq / entradas <= 0.8:
+            candidatos.append((40 + min(30, liq / entradas * 100),
+                f"<b>Você guardou {formatar_reais(liq)} em aplicações</b> no período, "
+                f"{_pct(liq / entradas * 100)} do que entrou. A referência comum é guardar "
+                "de 10% a 20%."))
 
     if qualidade["faturas"] and qualidade["pct_faturas"] >= 5:
         candidatos.append((90 + qualidade["pct_faturas"],
@@ -297,6 +319,85 @@ def _sugestoes(itens, cats, parcelas, saidas_mes, pct_nao_id, guardado, qualidad
     return [f for _, f in candidatos[:n]]
 
 
+# Essenciais × escolhas (referência comum de educação financeira)
+ESSENCIAIS = {"CASA", "SAÚDE", "TRANSPORTE", "EDUCAÇÃO", "IMPOSTOS E TAXAS",
+              "TARIFAS BANCÁRIAS"}
+ESCOLHAS = {"LAZER", "SHOPPING", "ASSINATURAS"}
+ALIMENTACAO_ESSENCIAL = {"Supermercado", "Padaria", "Feira", "Hortifruti e açougue"}
+
+
+def tipo_de_gasto(categoria, subcategoria):
+    """"essencial", "escolha" ou "outros" (transferências, não identificados, faturas)."""
+    if categoria == "ALIMENTAÇÃO":
+        return "essencial" if subcategoria in ALIMENTACAO_ESSENCIAL else "escolha"
+    if categoria in ESSENCIAIS:
+        return "essencial"
+    if categoria in ESCOLHAS:
+        return "escolha"
+    return "outros"
+
+
+def _aplicacoes(t):
+    """Aplicações e resgates (movimentação interna) e rendimentos recebidos."""
+    a = t[t["Categoria"] == CATEGORIA_APLICACAO]
+    aplicado = -a.loc[a["Valor"] < 0, "Valor"].sum()
+    resgatado = a.loc[a["Valor"] > 0, "Valor"].sum()
+    rend = t[(t["Tipo"] == "Entrada") & (t["Subcategoria"] == "Rendimentos")]["Valor"].sum()
+    por_mes = a.groupby("Mês")["Valor"].sum()   # negativo = aplicou mais do que resgatou
+    return {"tem": not a.empty or rend > 0, "aplicado": aplicado, "resgatado": resgatado,
+            "liquido": aplicado - resgatado, "rendimentos": rend,
+            "meses_resgatando": int((por_mes > 0).sum()), "meses": int(por_mes.size)}
+
+
+def _juros_e_encargos(t):
+    s = t[t["Tipo"] == "Saída"]
+    j = s[(s["Subcategoria"] == "IOF e juros")
+          | s["Descrição"].map(lambda d: bool(re.search(r"rotativ|juros|encargo|multa atraso",
+                                                        normalizar(d))))]
+    return float(-j["Valor"].sum())
+
+
+def _melhorias(t, n_meses, qualidade, aplicacoes):
+    """O que deixaria o relatório mais completo (para o fim do relatório)."""
+    m = []
+    if n_meses < 12:
+        m.append(f"<b>Use pelo menos 12 meses de extrato</b> (este relatório tem {n_meses}). "
+                 "Assim aparecem os gastos que só acontecem uma vez por ano: 13º, IPVA, IPTU, "
+                 "férias, matrícula e fim de ano.")
+    if qualidade["faturas"]:
+        m.append("<b>Envie as faturas do cartão.</b> Os pagamentos de fatura aparecem, mas "
+                 "sem as compras e sem as parcelas que ainda vêm.")
+    for q in qualidade["sem_nome"]:
+        m.append(f"<b>O extrato {q['conta']} não mostra o nome de quem recebeu</b> em "
+                 f"{_pct(q['pct'])} das saídas. Se o banco oferecer OFX ou CSV, eles costumam "
+                 "trazer esse nome.")
+    if not aplicacoes["tem"]:
+        m.append("<b>Não encontramos aplicações nem rendimentos.</b> Se você tem dinheiro "
+                 "guardado em conta investimento, poupança ou corretora, envie esse extrato: o "
+                 "relatório passa a calcular quanto você guarda por mês e o rendimento.")
+    s = t[t["Tipo"] == "Saída"]
+    carro = s[(s["Categoria"] == "TRANSPORTE")
+              & s["Subcategoria"].isin(["Posto de gasolina", "Seguro"])]
+    ipva = s["Descrição"].map(lambda d: "ipva" in normalizar(d)).any() \
+        or (s["Subcategoria"] == "IPVA e multas").any()
+    if len(carro) >= 3 and not ipva:
+        m.append("<b>Há gastos com carro (combustível ou seguro), mas o IPVA não apareceu.</b> "
+                 "Se ele foi pago por outra conta ou fora do período, não entrou nas contas; "
+                 "vale reservar esse valor para o próximo ano.")
+    casa = s[(s["Categoria"] == "CASA") & s["Subcategoria"].isin(["Condomínio", "Luz", "Água"])]
+    iptu = s["Descrição"].map(lambda d: "iptu" in normalizar(d)).any()
+    if n_meses >= 12 and len(casa) >= 6 and not iptu and \
+            not (s["Subcategoria"] == "Aluguel").any():
+        m.append("<b>O IPTU não apareceu.</b> Se você tem imóvel próprio, ele pode ter sido "
+                 "pago por outra conta.")
+    return m
+
+
+LIMITES = ("Este relatório enxerga só o que passou pelas contas e cartões enviados. Ficam de "
+           "fora: dívidas fora do cartão (empréstimos e financiamentos), bens (imóveis e "
+           "veículos), previdência e qualquer renda ou gasto feito por outras contas.")
+
+
 def montar_relatorio(t, guardado=None, hoje=None):
     """Tudo o que vai no relatório, calculado a partir das transações já processadas."""
     hoje = hoje or datetime.now()
@@ -325,6 +426,11 @@ def montar_relatorio(t, guardado=None, hoje=None):
 
     variacao = _variacao_recente(t)
     qualidade = qualidade_dos_dados(t)
+    aplicacoes = _aplicacoes(t)
+    juros = _juros_e_encargos(t)
+    gasto_tipo = s.assign(T=[tipo_de_gasto(c, sc) for c, sc in
+                             zip(s["Categoria"], s["Subcategoria"])], V=-s["Valor"]) \
+        .groupby("T")["V"].sum().to_dict()
     # Variação de cada categoria: últimos 3 meses × média anterior
     meses = sorted(s["Mês"].unique())
     var_cat = {}
@@ -364,9 +470,12 @@ def montar_relatorio(t, guardado=None, hoje=None):
         "parcelas": parcelas, "comprometido": comprometido, "indicadores": itens,
         "nota": nota, "contagem": contagem, "pct_nao_id": pct_nao_id, "guardado": guardado,
         "ano_ir": anos[-1] if anos else None, "ir": ir,
-        "qualidade": qualidade,
+        "qualidade": qualidade, "aplicacoes": aplicacoes, "juros": juros,
+        "gasto_tipo": {k: v / n_meses for k, v in gasto_tipo.items()},
+        "melhorias": _melhorias(t, n_meses, qualidade, aplicacoes), "limites": LIMITES,
         "destaques": _destaques(t, mensal, variacao, compromissos + parcela_prox,
-                                saidas / n_meses, qualidade),
+                                saidas / n_meses, qualidade, juros=juros,
+                                aplicacoes=aplicacoes, entradas=entradas),
         "sugestoes": _sugestoes(itens, cats, parcelas,
                                 {"n": n_meses, "media": saidas / n_meses}, pct_nao_id, guardado,
                                 qualidade),
@@ -492,7 +601,7 @@ def _nota_geral(dados, e):
     cor, rotulo = SINAL[dados["nota"]]
     c = dados["contagem"]
     detalhe = (f"{c[plus.BOM]} indicador(es) bom(ns), {c[plus.ATENCAO]} em atenção e "
-               f"{c[plus.ALERTA]} em alerta. Detalhes na página 4.")
+               f"{c[plus.ALERTA]} em alerta. Detalhes na última página.")
     d = Drawing(LARGURA, 46)
     d.add(Rect(0, 0, LARGURA, 46, fillColor=OSSO, strokeColor=None))
     d.add(Rect(0, 0, 5, 46, fillColor=cor, strokeColor=None))
@@ -641,6 +750,84 @@ def _barra_pct(pct, largura=60, cor=COR_SAIDAS):
     return d
 
 
+def _mil(v):
+    """Valor em milhares para rótulo curto: 10 / 9,9 / 0,5 (com sinal)."""
+    a = abs(v) / 1000
+    if a < 0.05:
+        return "0"
+    texto = f"{a:.0f}" if a >= 10 else f"{a:.1f}".replace(".", ",")
+    return ("+" if v >= 0 else "-") + texto
+
+
+def _grafico_cascata_mensal(mensal, altura=260):
+    """Cascata mês a mês com duas barras por mês: a entrada sobe (azul) e a saída desce
+    (dourado), sempre a partir de onde o mês anterior terminou. A última barra (cinza) é o
+    acumulado do período. Rótulos em R$ mil para caber."""
+    from reportlab.graphics.shapes import Line
+    meses = list(mensal.itertuples(index=False))
+    esq, dir_, base, topo_px = 36, LARGURA - 4, 22, altura - 24
+    vagas = 2 * len(meses) + 1.6            # 2 barras por mês + o acumulado (um pouco mais largo)
+    vaga = (dir_ - esq) / (vagas + 0.35 * len(meses))   # e um respiro entre os meses
+    barra, respiro = vaga * 0.86, vaga * 0.35
+    niveis, nivel = [0.0], 0.0
+    for m in meses:
+        niveis += [nivel + m.Entradas, nivel + m.Entradas - m.Saídas]
+        nivel = niveis[-1]
+    vmin, vmax = min(niveis), max(niveis)
+    passo = _topo((vmax - vmin) or 1) / 4
+    vmax = math.ceil(vmax / passo) * passo
+    vmin = math.floor(vmin / passo) * passo if vmin < 0 else 0
+    faixa = (vmax - vmin) or 1
+
+    def y(v):
+        return base + (topo_px - base) * (v - vmin) / faixa
+
+    d = Drawing(LARGURA, altura)
+    for k in range(int(round(faixa / passo)) + 1):   # grade discreta
+        v = vmin + passo * k
+        d.add(Line(esq, y(v), dir_, y(v), strokeColor=colors.HexColor("#ebe6da"),
+                   strokeWidth=0.5))
+        d.add(String(esq - 4, y(v) - 2.5, f"{v:,.0f}".replace(",", "."), fontName="Helvetica",
+                     fontSize=6, fillColor=CINZA, textAnchor="end"))
+    if vmin < 0:
+        d.add(Line(esq, y(0), dir_, y(0), strokeColor=CINZA, strokeWidth=0.6))
+
+    def degrau(x, de, ate, cor, rotulo, largura=barra):
+        baixo, alto = min(de, ate), max(de, ate)
+        d.add(Rect(x, y(baixo), largura, max(0.8, y(alto) - y(baixo)), fillColor=cor,
+                   strokeColor=None))
+        d.add(String(x + largura / 2, y(alto) + 2.5, rotulo, fontName="Helvetica-Bold",
+                     fontSize=5.6, fillColor=MARINHO, textAnchor="middle"))
+
+    x, nivel, fim_anterior = esq + respiro / 2, 0.0, None
+    for m in meses:
+        if fim_anterior is not None:   # linha fina ligando um degrau ao próximo
+            d.add(Line(fim_anterior, y(nivel), x, y(nivel), strokeColor=CINZA, strokeWidth=0.4))
+        degrau(x, nivel, nivel + m.Entradas, COR_ENTRADAS, _mil(m.Entradas))
+        topo = nivel + m.Entradas
+        d.add(Line(x + barra, y(topo), x + vaga, y(topo), strokeColor=CINZA, strokeWidth=0.4))
+        degrau(x + vaga, topo, topo - m.Saídas, COR_SAIDAS, _mil(-m.Saídas))
+        d.add(String(x + vaga, base - 10, rotulo_mes(m.Mês), fontName="Helvetica",
+                     fontSize=6, fillColor=MARINHO, textAnchor="middle"))
+        nivel = topo - m.Saídas
+        fim_anterior = x + vaga + barra
+        x += 2 * vaga + respiro
+    larg_total = barra * 1.6
+    d.add(Line(fim_anterior, y(nivel), x, y(nivel), strokeColor=CINZA, strokeWidth=0.4))
+    degrau(x, 0, nivel, COR_TOTAL, _mil(nivel), larg_total)
+    d.add(String(x + larg_total / 2, base - 10, "Acumulado", fontName="Helvetica", fontSize=6,
+                 fillColor=MARINHO, textAnchor="middle"))
+    for k, (nome, cor) in enumerate([("Entrou", COR_ENTRADAS), ("Saiu", COR_SAIDAS),
+                                     ("Acumulado do período", COR_TOTAL)]):
+        lx = esq + k * 80
+        d.add(Rect(lx, altura - 9, 8, 8, fillColor=cor, strokeColor=None))
+        d.add(String(lx + 11, altura - 8, nome, fontName="Helvetica", fontSize=7,
+                     fillColor=MARINHO))
+    d.add(String(dir_, altura - 8, "valores nas barras em R$ mil", fontName="Helvetica-Oblique",
+                 fontSize=6, fillColor=CINZA, textAnchor="end"))
+    return d
+
+
 def _pagina1(dados, e):
     h = [Paragraph("Seu dinheiro em uma página", e["titulo"]), _nota_geral(dados, e),
          Spacer(1, 8), _cartoes_kpi(dados, e), Spacer(1, 4),
@@ -650,11 +837,60 @@ def _pagina1(dados, e):
                    "transferências de outras pessoas e reembolsos).", e["pequeno"]),
          Paragraph("Destaques", e["sub"])]
     h += [Paragraph(f, e["item"], bulletText="•") for f in dados["destaques"]]
-    mensal = dados["mensal"]
-    h += [Paragraph("Entrou e saiu, mês a mês", e["sub"]),
-          _grafico_linhas([("Entrou", COR_ENTRADAS, dict(zip(mensal["Mês"], mensal["Entradas"]))),
-                           ("Saiu", COR_SAIDAS, dict(zip(mensal["Mês"], mensal["Saídas"])))],
-                          list(mensal["Mês"]), altura=300, largura_nomes=60)]
+    h += [Paragraph("Quanto sobrou ou faltou em cada mês", e["sub"]),
+          Paragraph("Em cada mês, a barra azul sobe com o que entrou e a dourada desce com o que "
+                    "saiu, a partir de onde o mês anterior terminou. A barra cinza é o acumulado "
+                    "do período.", e["pequeno"]), Spacer(1, 2),
+          _grafico_cascata_mensal(dados["mensal"], altura=190)]
+    gt = dados["gasto_tipo"]
+    if gt:
+        partes = []
+        for chave, rotulo in [("essencial", "Essenciais (casa, mercado, saúde, transporte, "
+                                            "educação, impostos)"),
+                              ("escolha", "Escolhas (restaurantes, lazer, compras, "
+                                          "assinaturas)"),
+                              ("outros", "Sem classificação (transferências, faturas, não "
+                                         "identificados)")]:
+            if gt.get(chave):
+                partes.append(f"{rotulo}: <b>{formatar_reais(gt[chave])}</b> por mês")
+        h.append(Paragraph(" · ".join(partes) + ".", e["pequeno"]))
+    return h + _secao_aplicacoes(dados, e)
+
+
+def _secao_aplicacoes(dados, e):
+    h = [Paragraph("Aplicações", e["sub"])]
+    a = dados["aplicacoes"]
+    if not a["tem"]:
+        h.append(Paragraph("Não encontramos aplicações, resgates nem rendimentos nos extratos "
+                           "enviados. Se você tem dinheiro guardado em conta investimento, "
+                           "poupança ou corretora, envie esse extrato para o relatório "
+                           "mostrar quanto você guarda e quanto rende.", e["texto"]))
+        return h
+    linhas = [[Paragraph("Movimento", e["cel_cab"]), Paragraph("Total", e["cel_cab_dir"])],
+              [Paragraph("Aplicado", e["cel"]),
+               Paragraph(formatar_reais(a["aplicado"]), e["cel_dir"])],
+              [Paragraph("Resgatado", e["cel"]),
+               Paragraph(formatar_reais(a["resgatado"]), e["cel_dir"])],
+              [Paragraph("<b>Guardado no período (aplicado − resgatado)</b>", e["cel"]),
+               Paragraph(f"<b>{formatar_reais(a['liquido'])}</b>", e["cel_dir"])],
+              [Paragraph("Rendimentos recebidos", e["cel"]),
+               Paragraph(formatar_reais(a["rendimentos"]), e["cel_dir"])]]
+    h.append(_tabela(linhas, [LARGURA * .75, LARGURA * .25]))
+    entradas = dados["entradas"]
+    if a["liquido"] >= 0 and entradas and a["liquido"] / entradas > 0.8:
+        txt = ("O valor guardado é maior do que quase tudo o que entrou: há aplicação e resgate "
+               "automáticos (como o Rende Fácil) ou dinheiro vindo de outras contas no meio. "
+               "Para saber quanto você realmente guarda, envie também o extrato da conta "
+               "investimento e das outras contas.")
+    elif a["liquido"] >= 0 and entradas:
+        txt = (f"Você guardou {_pct(a['liquido'] / entradas * 100)} do que entrou. A "
+               "referência comum é de 10% a 20%.")
+    else:
+        txt = (f"Saiu mais das aplicações do que entrou nelas: em {a['meses_resgatando']} de "
+               f"{a['meses']} meses, os resgates passaram das aplicações. Se isso cobre gastos "
+               "do dia a dia, é sinal de que o mês está fechando no vermelho.")
+    h.append(Paragraph(txt + " Rendimento é receita do dinheiro aplicado, não salário.",
+                       e["pequeno"]))
     return h
 
 
@@ -917,10 +1153,15 @@ def _pagina_atencao(dados, e):
         "contas e pagamento de fatura (o dinheiro só mudou de lugar).",
         f"<b>Não identificados:</b> {_pct(dados['pct_nao_id'], 1)} das saídas ficaram sem "
         "categoria reconhecida.",
-        "<b>Limites:</b> o relatório só enxerga o que está nos extratos enviados. Parcelas vêm "
-        "da fatura do cartão em PDF. As referências dos indicadores são de educação "
+        f"<b>Limites:</b> {dados['limites']} As referências dos indicadores são de educação "
         "financeira, não regras.",
     ]
+    if dados["melhorias"]:
+        melhorar = ParagraphStyle("melhorar", parent=e["pequeno"], leftIndent=10,
+                                  bulletIndent=0, spaceAfter=2)
+        h.append(KeepTogether([Paragraph("Para melhorar este relatório", e["sub"])]
+                              + [Paragraph(m, melhorar, bulletText="•")
+                                 for m in dados["melhorias"]]))
     bloco = [Paragraph("Como este relatório foi feito", e["sub"])]
     bloco += [Paragraph(x, e["pequeno"]) for x in transp]
     h.append(KeepTogether(bloco))

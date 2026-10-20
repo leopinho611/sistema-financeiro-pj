@@ -90,3 +90,49 @@ def test_sem_sugestao_de_teto_para_gasto_pequeno():
     t.loc[t["Categoria"] == "ALIMENTAÇÃO", "Valor"] = -10.0
     d = relatorio.montar_relatorio(t)
     assert not any("teto" in s for s in d["sugestoes"])
+
+
+def test_essenciais_e_melhorias():
+    d = relatorio.montar_relatorio(_t())
+    assert relatorio.tipo_de_gasto("ALIMENTAÇÃO", "Supermercado") == "essencial"
+    assert relatorio.tipo_de_gasto("ALIMENTAÇÃO", "Restaurante") == "escolha"
+    assert relatorio.tipo_de_gasto("TRANSFERÊNCIA", "") == "outros"
+    melhorias = " ".join(d["melhorias"])
+    assert "12 meses" in melhorias            # só 6 meses de extrato
+    assert "aplicações" in melhorias          # nenhuma aplicação encontrada
+    assert relatorio.gerar_pdf(d).startswith(b"%PDF")
+
+
+def test_ipva_ausente_com_gastos_de_carro_e_juros():
+    t = _t()
+    linhas = [(f"2026-0{m}-15", "Posto Exemplo", -200.0, "TRANSPORTE", "Posto de gasolina")
+              for m in range(1, 7)]
+    linhas.append(("2026-03-20", "Juros Exemplo", -150.0, "TARIFAS BANCÁRIAS", "IOF e juros"))
+    extra = pd.DataFrame(linhas, columns=["Data", "Fornecedor", "Valor", "Categoria",
+                                          "Subcategoria"])
+    extra["Data"] = pd.to_datetime(extra["Data"])
+    extra["Descrição"] = extra["Fornecedor"].str.upper()
+    extra["Tipo"], extra["Conta"] = "Saída", "Banco Exemplo"
+    extra["Mês"] = extra["Data"].dt.to_period("M").astype(str)
+    d = relatorio.montar_relatorio(pd.concat([t, extra], ignore_index=True))
+    assert any("IPVA" in m for m in d["melhorias"])
+    assert d["juros"] == 150.0
+    assert any("juros, IOF e encargos" in f for f in d["destaques"])
+
+
+def test_aplicacoes():
+    t = _t()
+    extra = pd.DataFrame({"Data": pd.to_datetime(["2026-02-06", "2026-04-06"]),
+                          "Fornecedor": ["Aplicação", "Resgate"], "Valor": [-3000.0, 500.0],
+                          "Categoria": ["APLICAÇÃO/RESGATE"] * 2, "Subcategoria": ["", ""]})
+    extra["Descrição"] = extra["Fornecedor"].str.upper()
+    extra["Tipo"], extra["Conta"] = "Interna", "Banco Exemplo"
+    extra["Mês"] = extra["Data"].dt.to_period("M").astype(str)
+    a = relatorio.montar_relatorio(pd.concat([t, extra], ignore_index=True))["aplicacoes"]
+    assert (a["aplicado"], a["resgatado"], a["liquido"]) == (3000.0, 500.0, 2500.0)
+
+
+def test_rotulo_em_mil():
+    assert relatorio._mil(12345) == "+12"
+    assert relatorio._mil(-9876) == "-9,9"
+    assert relatorio._mil(0) == "0"

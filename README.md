@@ -20,7 +20,7 @@ Um aplicativo web que automatiza a categorização de extratos bancários e gera
 ✅ Consultar CNPJ - Pix para empresas: consulta a atividade na Receita (dados públicos) e sugere a categoria pelo CNAE; vale até fechar o app
 
 ⭐ Área Plus (com código de acesso)
-⭐ Relatório em PDF - 4 páginas em linguagem simples: nota geral, destaques, para onde foi o dinheiro (categoria → subcategoria → maiores gastos), o que já está comprometido, pontos de atenção, prévia do IR e próximos passos. Na área aberta há um exemplo com dados fictícios para baixar  
+⭐ Relatório em PDF - 4 páginas em linguagem simples: nota geral, destaques, mês a mês em cascata e aplicações, para onde foi o dinheiro (categoria → subcategoria → maiores gastos), o que já está comprometido, pontos de atenção, prévia do IR, próximos passos e o que falta enviar para o relatório ficar mais completo. Na área aberta há um exemplo com dados fictícios para baixar  
 ⭐ Imposto de Renda - Possíveis deduções (saúde, educação, PGBL, pensão) com o CNPJ de quem recebeu, rendimentos de empresas e de pessoas; planilha para o contador  
 ⭐ Fixos e parcelas - Gastos que se repetem (valor fixo, conta mensal, frequente) com a data prevista do próximo; parcelas do cartão que ainda faltam, quanto e até quando  
 ⭐ Saúde financeira - Indicadores com semáforo: quanto sobra, meses no vermelho, dependência da maior fonte, compromissos, parcelas e reserva de emergência  
