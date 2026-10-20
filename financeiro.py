@@ -1220,6 +1220,9 @@ def expandir_zip(conteudo):
         return [(PurePosixPath(m.filename).name, z.read(m)) for m in membros]
 
 
+FORMATOS_PLANILHA = {"csv", "xlsx", "xls", "excel", "txt", "tsv"}
+
+
 def carregar_arquivo(nome, conteudo):
     """Lê um arquivo enviado.
 
@@ -1264,6 +1267,13 @@ def carregar_arquivo(nome, conteudo):
         raise ValueError("PDF não reconhecido (são lidos extratos de BB, Bradesco, Itaú, "
                          "Santander, Nubank, Sicredi e XP, faturas de BB, Bradesco e Itaú, e "
                          "as aplicações desses bancos); envie o extrato em CSV, Excel ou OFX.")
+    # Planilha (CSV/Excel/texto); outros formatos (XML de nota fiscal, imagens...) não são
+    # extrato e virariam uma planilha sem sentido
+    if ext not in FORMATOS_PLANILHA and "." in nome:
+        if ext == "xml" or conteudo.lstrip()[:5] == b"<?xml":
+            raise ValueError("XML (nota fiscal?) não é extrato bancário; envie o extrato em "
+                             "CSV, Excel, OFX ou PDF.")
+        raise ValueError(f"formato .{ext} não é lido; envie o extrato em CSV, Excel, OFX ou PDF.")
     bruto = ler_extrato(nome, conteudo)
     return {"tipo": "tabela", "bruto": bruto, "conta": identificar_conta(nome, bruto.columns)}
 
