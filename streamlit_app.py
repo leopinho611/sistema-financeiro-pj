@@ -562,7 +562,7 @@ def _posicoes_dos_nomes(valores, topo, altura=ALTURA_LINHAS):
 
 
 def grafico_linhas(longo, nome_total="Total", max_series=7, rotulo="Despesa",
-                   altura=ALTURA_LINHAS, largura_nomes=LARGURA_NOMES):
+                   altura=ALTURA_LINHAS, largura_nomes=LARGURA_NOMES, com_total=True):
     """Uma linha por série (Mês, Fornecedor, Valor) e uma linha tracejada com o total.
 
     As max_series maiores ganham linha própria; as demais se juntam em "Outros". O nome
@@ -579,12 +579,13 @@ def grafico_linhas(longo, nome_total="Total", max_series=7, rotulo="Despesa",
         ordem = list(ordem[:max_series]) + [nome_outros]
     series = list(ordem)
     meses = sorted(longo["Mês"].unique())
+    # Sem o total (com_total=False), as linhas usam a altura toda do gráfico
     total = longo.groupby("Mês", as_index=False)["Valor"].sum().assign(Fornecedor=nome_total)
-    dados = pd.concat([longo, total], ignore_index=True)
+    dados = pd.concat([longo, total], ignore_index=True) if com_total else longo.copy()
     dados["Rótulo"] = dados["Mês"].map(rotulo_mes)
     dados["Texto"] = dados["Valor"].map(formatar_reais)
     rotulos = [rotulo_mes(m) for m in meses]
-    nomes = [nome_total] + series
+    nomes = ([nome_total] if com_total else []) + series
     topo = _topo_do_eixo(dados["Valor"].max())
 
     # Nome no fim de cada linha (no último mês em que a série aparece)
@@ -607,7 +608,7 @@ def grafico_linhas(longo, nome_total="Total", max_series=7, rotulo="Despesa",
               axis=alt.Axis(labelAngle=0, labelOverlap=True))
     y = alt.Y("Valor:Q", axis=EIXO_REAIS, scale=alt.Scale(domain=[0, topo], nice=False))
     cor = alt.Color("Fornecedor:N", sort=nomes, legend=None,
-                    scale=alt.Scale(domain=nomes, range=[COR_TOTAL] + CORES_SERIES[:len(series)]))
+                    scale=alt.Scale(domain=nomes, range=([COR_TOTAL] if com_total else []) + CORES_SERIES[:len(series)]))
     tracejado = alt.condition(alt.datum.Fornecedor == nome_total, alt.value([6, 4]),
                               alt.value([1, 0]))
     espessura = alt.condition(alt.datum.Fornecedor == nome_total, alt.value(3), alt.value(2))
@@ -1484,14 +1485,16 @@ with corpo:
                 st.markdown(ranking_html(tabela, tipo, n=n), unsafe_allow_html=True)
             dica(nota)
 
-    def linhas_por_mes(dados, rotulo):
-        """Uma linha por categoria escolhida (as 7 maiores; o resto em "Outros") e o total,
-        mês a mês."""
+    def linhas_por_mes(dados, rotulo, com_total=True):
+        """Uma linha por categoria escolhida (as 7 maiores; o resto em "Outros") e, se
+        com_total, o total, mês a mês."""
         longo = (dados.assign(Valor=dados["Valor"].abs())
                  .groupby(["Mês", "Categoria"], as_index=False)["Valor"].sum()
                  .rename(columns={"Categoria": "Fornecedor"}))
         st.altair_chart(grafico_linhas(longo, "Total", max_series=7, rotulo=rotulo,
-                                       altura=460, largura_nomes=170), width="stretch")
+                                       altura=420 if com_total else 380,
+                                       largura_nomes=170, com_total=com_total),
+                        width="stretch")
         dica("Passe o mouse sobre o gráfico para ver os valores de cada mês")
 
     # ----------------------------------------------------------------------------
@@ -1613,8 +1616,8 @@ with corpo:
                     ])
                     if varios_meses:
                         with st.container(border=True):
-                            titulo_painel("Saídas", "por categoria e total, mês a mês")
-                            linhas_por_mes(df_s, "Categoria")
+                            titulo_painel("Saídas", "por categoria, mês a mês")
+                            linhas_por_mes(df_s, "Categoria", com_total=False)
                 with dir_:
                     painel_ciano("Para onde vai", "Categorias escolhidas", cats_sel, "Saída",
                                  "Clique numa categoria, logo abaixo, para abrir os fornecedores")
