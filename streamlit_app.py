@@ -1517,7 +1517,7 @@ with corpo:
         st.markdown("""
         Um PDF de 4 páginas, para ler com calma, imprimir ou levar ao seu especialista:
         1. **Seu dinheiro em uma página** — nota geral, quanto entrou e saiu, destaques, o mês
-           a mês em cascata e as aplicações
+           a mês e as aplicações
         2. **Para onde foi o dinheiro** — categorias, subcategorias e maiores gastos
         3. **O que já está comprometido** — próximos 3 meses, contas que se repetem e parcelas
         4. **Atenção, imposto e próximos passos** — indicadores, prévia do IR, sugestões e o

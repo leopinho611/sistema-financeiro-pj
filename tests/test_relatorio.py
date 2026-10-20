@@ -130,9 +130,3 @@ def test_aplicacoes():
     extra["Mês"] = extra["Data"].dt.to_period("M").astype(str)
     a = relatorio.montar_relatorio(pd.concat([t, extra], ignore_index=True))["aplicacoes"]
     assert (a["aplicado"], a["resgatado"], a["liquido"]) == (3000.0, 500.0, 2500.0)
-
-
-def test_rotulo_em_mil():
-    assert relatorio._mil(12345) == "+12"
-    assert relatorio._mil(-9876) == "-9,9"
-    assert relatorio._mil(0) == "0"

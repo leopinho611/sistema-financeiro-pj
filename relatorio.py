@@ -750,84 +750,6 @@ def _barra_pct(pct, largura=60, cor=COR_SAIDAS):
     return d
 
 
-def _mil(v):
-    """Valor em milhares para rótulo curto: 10 / 9,9 / 0,5 (com sinal)."""
-    a = abs(v) / 1000
-    if a < 0.05:
-        return "0"
-    texto = f"{a:.0f}" if a >= 10 else f"{a:.1f}".replace(".", ",")
-    return ("+" if v >= 0 else "-") + texto
-
-
-def _grafico_cascata_mensal(mensal, altura=260):
-    """Cascata mês a mês com duas barras por mês: a entrada sobe (azul) e a saída desce
-    (dourado), sempre a partir de onde o mês anterior terminou. A última barra (cinza) é o
-    acumulado do período. Rótulos em R$ mil para caber."""
-    from reportlab.graphics.shapes import Line
-    meses = list(mensal.itertuples(index=False))
-    esq, dir_, base, topo_px = 36, LARGURA - 4, 22, altura - 24
-    vagas = 2 * len(meses) + 1.6            # 2 barras por mês + o acumulado (um pouco mais largo)
-    vaga = (dir_ - esq) / (vagas + 0.35 * len(meses))   # e um respiro entre os meses
-    barra, respiro = vaga * 0.86, vaga * 0.35
-    niveis, nivel = [0.0], 0.0
-    for m in meses:
-        niveis += [nivel + m.Entradas, nivel + m.Entradas - m.Saídas]
-        nivel = niveis[-1]
-    vmin, vmax = min(niveis), max(niveis)
-    passo = _topo((vmax - vmin) or 1) / 4
-    vmax = math.ceil(vmax / passo) * passo
-    vmin = math.floor(vmin / passo) * passo if vmin < 0 else 0
-    faixa = (vmax - vmin) or 1
-
-    def y(v):
-        return base + (topo_px - base) * (v - vmin) / faixa
-
-    d = Drawing(LARGURA, altura)
-    for k in range(int(round(faixa / passo)) + 1):   # grade discreta
-        v = vmin + passo * k
-        d.add(Line(esq, y(v), dir_, y(v), strokeColor=colors.HexColor("#ebe6da"),
-                   strokeWidth=0.5))
-        d.add(String(esq - 4, y(v) - 2.5, f"{v:,.0f}".replace(",", "."), fontName="Helvetica",
-                     fontSize=6, fillColor=CINZA, textAnchor="end"))
-    if vmin < 0:
-        d.add(Line(esq, y(0), dir_, y(0), strokeColor=CINZA, strokeWidth=0.6))
-
-    def degrau(x, de, ate, cor, rotulo, largura=barra):
-        baixo, alto = min(de, ate), max(de, ate)
-        d.add(Rect(x, y(baixo), largura, max(0.8, y(alto) - y(baixo)), fillColor=cor,
-                   strokeColor=None))
-        d.add(String(x + largura / 2, y(alto) + 2.5, rotulo, fontName="Helvetica-Bold",
-                     fontSize=5.6, fillColor=MARINHO, textAnchor="middle"))
-
-    x, nivel, fim_anterior = esq + respiro / 2, 0.0, None
-    for m in meses:
-        if fim_anterior is not None:   # linha fina ligando um degrau ao próximo
-            d.add(Line(fim_anterior, y(nivel), x, y(nivel), strokeColor=CINZA, strokeWidth=0.4))
-        degrau(x, nivel, nivel + m.Entradas, COR_ENTRADAS, _mil(m.Entradas))
-        topo = nivel + m.Entradas
-        d.add(Line(x + barra, y(topo), x + vaga, y(topo), strokeColor=CINZA, strokeWidth=0.4))
-        degrau(x + vaga, topo, topo - m.Saídas, COR_SAIDAS, _mil(-m.Saídas))
-        d.add(String(x + vaga, base - 10, rotulo_mes(m.Mês), fontName="Helvetica",
-                     fontSize=6, fillColor=MARINHO, textAnchor="middle"))
-        nivel = topo - m.Saídas
-        fim_anterior = x + vaga + barra
-        x += 2 * vaga + respiro
-    larg_total = barra * 1.6
-    d.add(Line(fim_anterior, y(nivel), x, y(nivel), strokeColor=CINZA, strokeWidth=0.4))
-    degrau(x, 0, nivel, COR_TOTAL, _mil(nivel), larg_total)
-    d.add(String(x + larg_total / 2, base - 10, "Acumulado", fontName="Helvetica", fontSize=6,
-                 fillColor=MARINHO, textAnchor="middle"))
-    for k, (nome, cor) in enumerate([("Entrou", COR_ENTRADAS), ("Saiu", COR_SAIDAS),
-                                     ("Acumulado do período", COR_TOTAL)]):
-        lx = esq + k * 80
-        d.add(Rect(lx, altura - 9, 8, 8, fillColor=cor, strokeColor=None))
-        d.add(String(lx + 11, altura - 8, nome, fontName="Helvetica", fontSize=7,
-                     fillColor=MARINHO))
-    d.add(String(dir_, altura - 8, "valores nas barras em R$ mil", fontName="Helvetica-Oblique",
-                 fontSize=6, fillColor=CINZA, textAnchor="end"))
-    return d
-
-
 def _pagina1(dados, e):
     h = [Paragraph("Seu dinheiro em uma página", e["titulo"]), _nota_geral(dados, e),
          Spacer(1, 8), _cartoes_kpi(dados, e), Spacer(1, 4),
@@ -837,11 +759,11 @@ def _pagina1(dados, e):
                    "transferências de outras pessoas e reembolsos).", e["pequeno"]),
          Paragraph("Destaques", e["sub"])]
     h += [Paragraph(f, e["item"], bulletText="•") for f in dados["destaques"]]
-    h += [Paragraph("Quanto sobrou ou faltou em cada mês", e["sub"]),
-          Paragraph("Em cada mês, a barra azul sobe com o que entrou e a dourada desce com o que "
-                    "saiu, a partir de onde o mês anterior terminou. A barra cinza é o acumulado "
-                    "do período.", e["pequeno"]), Spacer(1, 2),
-          _grafico_cascata_mensal(dados["mensal"], altura=190)]
+    mensal = dados["mensal"]
+    h += [Paragraph("Entrou e saiu, mês a mês", e["sub"]),
+          _grafico_linhas([("Entrou", COR_ENTRADAS, dict(zip(mensal["Mês"], mensal["Entradas"]))),
+                           ("Saiu", COR_SAIDAS, dict(zip(mensal["Mês"], mensal["Saídas"])))],
+                          list(mensal["Mês"]), altura=210, largura_nomes=60)]
     gt = dados["gasto_tipo"]
     if gt:
         partes = []
