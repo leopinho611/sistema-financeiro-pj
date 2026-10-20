@@ -263,48 +263,55 @@ def _curto(v):
 
 
 def grafico_mensal(mensal):
-    """Cascata mês a mês: cada mês sobe (sobrou) ou desce (faltou) a partir de onde o
-    mês anterior terminou; a última barra é o acumulado do período."""
+    """Cascata mês a mês com duas barras por mês: a entrada sobe (azul) e a saída desce
+    (dourado), a partir de onde o mês anterior terminou; a última barra é o acumulado."""
     linhas, nivel = [], 0.0
     for _, m in mensal.iterrows():
-        saldo = m["Entradas"] - m["Saídas"]
-        linhas.append({"Rótulo": rotulo_mes(m["Mês"]), "Início": nivel, "Fim": nivel + saldo,
-                       "Situação": "Sobrou no mês" if saldo >= 0 else "Faltou no mês",
-                       "Texto": _curto(saldo), "Entradas": formatar_reais(m["Entradas"]),
-                       "Saídas": formatar_reais(m["Saídas"]), "Saldo": formatar_reais(saldo),
-                       "Acumulado": formatar_reais(nivel + saldo)})
-        nivel += saldo
-    linhas.append({"Rótulo": "Acumulado", "Início": 0.0, "Fim": nivel,
-                   "Situação": "Acumulado no período", "Texto": _curto(nivel),
-                   "Entradas": formatar_reais(mensal["Entradas"].sum()),
-                   "Saídas": formatar_reais(mensal["Saídas"].sum()),
-                   "Saldo": formatar_reais(nivel), "Acumulado": formatar_reais(nivel)})
+        rot = rotulo_mes(m["Mês"])
+        topo = nivel + m["Entradas"]
+        fim = topo - m["Saídas"]
+        comum = {"Rótulo": rot, "Entradas": formatar_reais(m["Entradas"]),
+                 "Saídas": formatar_reais(m["Saídas"]),
+                 "Saldo": formatar_reais(m["Entradas"] - m["Saídas"]),
+                 "Acumulado": formatar_reais(fim)}
+        linhas.append({**comum, "Barra": "Entrou", "Cor": "Entrou", "Base": nivel, "Topo": topo,
+                       "Texto": _curto(m["Entradas"])})
+        linhas.append({**comum, "Barra": "Saiu", "Cor": "Saiu", "Base": fim, "Topo": topo,
+                       "Texto": _curto(-m["Saídas"])})
+        nivel = fim
+    total = {"Rótulo": "Acumulado", "Entradas": formatar_reais(mensal["Entradas"].sum()),
+             "Saídas": formatar_reais(mensal["Saídas"].sum()), "Saldo": formatar_reais(nivel),
+             "Acumulado": formatar_reais(nivel), "Cor": "Acumulado do período",
+             "Base": min(0.0, nivel), "Topo": max(0.0, nivel)}
     dados = pd.DataFrame(linhas)
-    dados["Topo"] = dados[["Início", "Fim"]].max(axis=1)
-    dados["Base"] = dados[["Início", "Fim"]].min(axis=1)
-    ordem = list(dados["Rótulo"])
-    situacoes = ["Sobrou no mês", "Faltou no mês", "Acumulado no período"]
+    # O acumulado vai numa camada própria, sem o deslocamento dos meses: uma barra só, larga
+    acumulado = pd.DataFrame([{**total, "Texto": _curto(nivel)}])
+    ordem = list(dict.fromkeys(dados["Rótulo"])) + ["Acumulado"]
+    cores = ["Entrou", "Saiu", "Acumulado do período"]
     x = alt.X("Rótulo:N", sort=ordem, title=None, axis=alt.Axis(labelAngle=0),
-              scale=alt.Scale(paddingInner=0.35, paddingOuter=0.2))
-    barras = alt.Chart(dados).mark_bar(cornerRadius=3).encode(
-        x=x, y=alt.Y("Base:Q", axis=EIXO_REAIS, title=None), y2="Topo:Q",
-        color=alt.Color("Situação:N", sort=situacoes,
-                        scale=alt.Scale(domain=situacoes,
-                                        range=[COR_ENTRADAS, COR_SAIDAS, "#8c8c8c"]),
-                        legend=alt.Legend(title=None, orient="top")),
-        tooltip=[alt.Tooltip("Rótulo:N", title="Mês"), alt.Tooltip("Entradas:N"),
-                 alt.Tooltip("Saídas:N"), alt.Tooltip("Saldo:N", title="Saldo do mês"),
-                 alt.Tooltip("Acumulado:N", title="Acumulado até aqui")])
-    rotulos = alt.Chart(dados).mark_text(baseline="bottom", dy=-3, fontSize=11,
-                                         fontWeight="bold", color=cor_do_texto()).encode(
-        x=x, y="Topo:Q", text="Texto:N")
-    # Linha fina ligando o fim de um mês ao começo do seguinte
-    ligacoes = alt.Chart(dados.iloc[:-1].assign(Prox=ordem[1:])).mark_rule(
-        color="#8c8c8c", strokeWidth=0.8, strokeDash=[2, 2]).encode(
-        x=x, x2="Prox:N", y="Fim:Q")
+              scale=alt.Scale(paddingInner=0.25, paddingOuter=0.1))
+    desloc = alt.XOffset("Barra:N", sort=["Entrou", "Saiu"],
+                         scale=alt.Scale(paddingInner=0.08))
+    cor = alt.Color("Cor:N", sort=cores,
+                    scale=alt.Scale(domain=cores, range=[COR_ENTRADAS, COR_SAIDAS, "#8c8c8c"]),
+                    legend=alt.Legend(title=None, orient="top"))
+    dica_ = [alt.Tooltip("Rótulo:N", title="Mês"), alt.Tooltip("Entradas:N"),
+             alt.Tooltip("Saídas:N"), alt.Tooltip("Saldo:N", title="Saldo do mês"),
+             alt.Tooltip("Acumulado:N", title="Acumulado até aqui")]
+    y = alt.Y("Base:Q", axis=EIXO_REAIS, title=None)
+    texto = dict(baseline="bottom", dy=-3, fontSize=10, fontWeight="bold",
+                 color=cor_do_texto())
+    barras = alt.Chart(dados).mark_bar(cornerRadius=2).encode(
+        x=x, xOffset=desloc, y=y, y2="Topo:Q", color=cor, tooltip=dica_)
+    barra_total = alt.Chart(acumulado).mark_bar(cornerRadius=2).encode(
+        x=x, y=y, y2="Topo:Q", color=cor, tooltip=dica_)
+    rotulos = (alt.Chart(dados).mark_text(**texto).encode(x=x, xOffset=desloc, y="Topo:Q",
+                                                           text="Texto:N")
+               + alt.Chart(acumulado).mark_text(**texto).encode(x=x, y="Topo:Q",
+                                                                 text="Texto:N"))
     zero = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color="#8c8c8c", strokeWidth=0.8) \
         .encode(y="y:Q")
-    return (zero + ligacoes + barras + rotulos).properties(height=340)
+    return (zero + barras + barra_total + rotulos).properties(height=360)
 
 
 def _pct(v):
@@ -1269,8 +1276,9 @@ with corpo:
     with tab_mes:
         mensal = resumo_mensal(df)
         st.subheader("Quanto sobrou ou faltou em cada mês")
-        st.caption("Cada barra é o saldo do mês (entradas menos saídas), começando de onde o "
-                   "mês anterior terminou. A última mostra o acumulado do período.")
+        st.caption("Em cada mês, a barra azul sobe com o que entrou e a dourada desce com o "
+                   "que saiu, a partir de onde o mês anterior terminou. A última mostra o "
+                   "acumulado do período.")
         dica("Passe o mouse sobre as barras para ver entradas, saídas e o acumulado")
         st.altair_chart(grafico_mensal(mensal), width="stretch")
         st.dataframe(tabela_em_reais(mensal.assign(Mês=mensal["Mês"].map(rotulo_mes)),
@@ -1468,7 +1476,7 @@ with corpo:
                           formatar_reais(dedu["Total"].sum()),
                           help="Saúde, educação, previdência privada e pensão.")
             st.markdown("""
-            - **⭐ Relatório completo em PDF** — 5 páginas em linguagem simples: sua nota
+            - **⭐ Relatório completo em PDF** — 4 páginas em linguagem simples: sua nota
               geral, os destaques do período, para onde foi o dinheiro (categorias,
               subcategorias e maiores gastos), o que já está comprometido nos próximos meses,
               os pontos de atenção, a prévia do IR e os próximos passos sugeridos.
@@ -1507,13 +1515,12 @@ with corpo:
     with tab_relatorio:
         st.subheader("📄 Relatório Contas em Dia")
         st.markdown("""
-        Um PDF de 5 páginas, para ler com calma, imprimir ou levar ao seu especialista:
-        1. **Seu dinheiro em uma página** — nota geral, quanto entrou e saiu, destaques e
-           gastos essenciais × escolhas
-        2. **Mês a mês e aplicações** — entradas e saídas de cada mês, quanto foi guardado
-        3. **Para onde foi o dinheiro** — categorias, subcategorias e maiores gastos
-        4. **O que já está comprometido** — próximos 3 meses, contas que se repetem e parcelas
-        5. **Atenção, imposto e próximos passos** — indicadores, prévia do IR, sugestões e o
+        Um PDF de 4 páginas, para ler com calma, imprimir ou levar ao seu especialista:
+        1. **Seu dinheiro em uma página** — nota geral, quanto entrou e saiu, destaques, o mês
+           a mês em cascata e as aplicações
+        2. **Para onde foi o dinheiro** — categorias, subcategorias e maiores gastos
+        3. **O que já está comprometido** — próximos 3 meses, contas que se repetem e parcelas
+        4. **Atenção, imposto e próximos passos** — indicadores, prévia do IR, sugestões e o
            que falta enviar para o relatório ficar mais completo
         """)
         st.caption(f"Usa as contas e o período escolhidos no menu lateral ({periodo}). A reserva "

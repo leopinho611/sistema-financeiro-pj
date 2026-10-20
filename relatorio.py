@@ -837,6 +837,11 @@ def _pagina1(dados, e):
                    "transferências de outras pessoas e reembolsos).", e["pequeno"]),
          Paragraph("Destaques", e["sub"])]
     h += [Paragraph(f, e["item"], bulletText="•") for f in dados["destaques"]]
+    h += [Paragraph("Quanto sobrou ou faltou em cada mês", e["sub"]),
+          Paragraph("Em cada mês, a barra azul sobe com o que entrou e a dourada desce com o que "
+                    "saiu, a partir de onde o mês anterior terminou. A barra cinza é o acumulado "
+                    "do período.", e["pequeno"]), Spacer(1, 2),
+          _grafico_cascata_mensal(dados["mensal"], altura=190)]
     gt = dados["gasto_tipo"]
     if gt:
         partes = []
@@ -849,19 +854,11 @@ def _pagina1(dados, e):
             if gt.get(chave):
                 partes.append(f"{rotulo}: <b>{formatar_reais(gt[chave])}</b> por mês")
         h.append(Paragraph(" · ".join(partes) + ".", e["pequeno"]))
-    return h
+    return h + _secao_aplicacoes(dados, e)
 
 
-def _pagina_mes_a_mes(dados, e):
-    mensal = dados["mensal"]
-    h = [Paragraph("Mês a mês e aplicações", e["titulo"]),
-         Paragraph("Quanto sobrou ou faltou em cada mês", e["sub"]),
-         Paragraph("Em cada mês, a barra azul sobe com o que entrou e a dourada desce com o que "
-                   "saiu, começando de onde o mês anterior terminou. A última barra é o "
-                   "acumulado do período: quanto sobrou ou faltou no total.", e["pequeno"]),
-         Spacer(1, 4),
-         _grafico_cascata_mensal(mensal),
-         Paragraph("Aplicações", e["sub"])]
+def _secao_aplicacoes(dados, e):
+    h = [Paragraph("Aplicações", e["sub"])]
     a = dados["aplicacoes"]
     if not a["tem"]:
         h.append(Paragraph("Não encontramos aplicações, resgates nem rendimentos nos extratos "
@@ -1189,8 +1186,7 @@ def gerar_pdf(dados):
                             topMargin=29 * mm, bottomMargin=16 * mm,
                             title="Relatório Contas em Dia", author="Contas em Dia")
     e = _estilos()
-    historia = (_pagina1(dados, e) + [PageBreak()] + _pagina_mes_a_mes(dados, e)
-                + [PageBreak()] + _pagina2(dados, e) + [PageBreak()]
+    historia = (_pagina1(dados, e) + [PageBreak()] + _pagina2(dados, e) + [PageBreak()]
                 + _pagina_compromissos(dados, e) + [PageBreak()] + _pagina_atencao(dados, e))
     desenhar = _cabecalho_rodape(dados)
     doc.build(historia, onFirstPage=desenhar, onLaterPages=desenhar)
