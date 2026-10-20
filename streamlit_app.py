@@ -251,28 +251,60 @@ def grafico_categorias(cats, tipo="Saída"):
     )
 
 
+def _curto(v):
+    """Valor curto para rótulo: 850 / 7,3 mil / 12 mil (com sinal)."""
+    sinal = "-" if v < 0 else "+"
+    a = abs(v)
+    if a >= 10000:
+        return f"{sinal}{a / 1000:.0f} mil"
+    if a >= 1000:
+        return f"{sinal}{a / 1000:.1f} mil".replace(".", ",")
+    return f"{sinal}{a:.0f}"
+
+
 def grafico_mensal(mensal):
-    longo = mensal.melt(id_vars="Mês", value_vars=["Entradas", "Saídas"],
-                        var_name="Tipo", value_name="Total")
-    longo["Rótulo"] = longo["Mês"].map(rotulo_mes)
-    longo["Valor"] = longo["Total"].map(formatar_reais)
-    ordem = [rotulo_mes(m) for m in mensal["Mês"]]
-    return (
-        alt.Chart(longo)
-        .mark_bar(cornerRadiusEnd=4)
-        .encode(
-            x=alt.X("Rótulo:N", sort=ordem, title=None, axis=alt.Axis(labelAngle=0)),
-            xOffset=alt.XOffset("Tipo:N", sort=["Entradas", "Saídas"]),
-            y=alt.Y("Total:Q", axis=EIXO_REAIS),
-            color=alt.Color("Tipo:N", sort=["Entradas", "Saídas"],
-                            scale=alt.Scale(domain=["Entradas", "Saídas"],
-                                            range=[COR_ENTRADAS, COR_SAIDAS]),
-                            legend=alt.Legend(title=None, orient="top")),
-            tooltip=[alt.Tooltip("Rótulo:N", title="Mês"), alt.Tooltip("Tipo:N"),
-                     alt.Tooltip("Valor:N", title="Total")],
-        )
-        .properties(height=320)
-    )
+    """Cascata mês a mês: cada mês sobe (sobrou) ou desce (faltou) a partir de onde o
+    mês anterior terminou; a última barra é o acumulado do período."""
+    linhas, nivel = [], 0.0
+    for _, m in mensal.iterrows():
+        saldo = m["Entradas"] - m["Saídas"]
+        linhas.append({"Rótulo": rotulo_mes(m["Mês"]), "Início": nivel, "Fim": nivel + saldo,
+                       "Situação": "Sobrou no mês" if saldo >= 0 else "Faltou no mês",
+                       "Texto": _curto(saldo), "Entradas": formatar_reais(m["Entradas"]),
+                       "Saídas": formatar_reais(m["Saídas"]), "Saldo": formatar_reais(saldo),
+                       "Acumulado": formatar_reais(nivel + saldo)})
+        nivel += saldo
+    linhas.append({"Rótulo": "Acumulado", "Início": 0.0, "Fim": nivel,
+                   "Situação": "Acumulado no período", "Texto": _curto(nivel),
+                   "Entradas": formatar_reais(mensal["Entradas"].sum()),
+                   "Saídas": formatar_reais(mensal["Saídas"].sum()),
+                   "Saldo": formatar_reais(nivel), "Acumulado": formatar_reais(nivel)})
+    dados = pd.DataFrame(linhas)
+    dados["Topo"] = dados[["Início", "Fim"]].max(axis=1)
+    dados["Base"] = dados[["Início", "Fim"]].min(axis=1)
+    ordem = list(dados["Rótulo"])
+    situacoes = ["Sobrou no mês", "Faltou no mês", "Acumulado no período"]
+    x = alt.X("Rótulo:N", sort=ordem, title=None, axis=alt.Axis(labelAngle=0),
+              scale=alt.Scale(paddingInner=0.35, paddingOuter=0.2))
+    barras = alt.Chart(dados).mark_bar(cornerRadius=3).encode(
+        x=x, y=alt.Y("Base:Q", axis=EIXO_REAIS, title=None), y2="Topo:Q",
+        color=alt.Color("Situação:N", sort=situacoes,
+                        scale=alt.Scale(domain=situacoes,
+                                        range=[COR_ENTRADAS, COR_SAIDAS, "#8c8c8c"]),
+                        legend=alt.Legend(title=None, orient="top")),
+        tooltip=[alt.Tooltip("Rótulo:N", title="Mês"), alt.Tooltip("Entradas:N"),
+                 alt.Tooltip("Saídas:N"), alt.Tooltip("Saldo:N", title="Saldo do mês"),
+                 alt.Tooltip("Acumulado:N", title="Acumulado até aqui")])
+    rotulos = alt.Chart(dados).mark_text(baseline="bottom", dy=-3, fontSize=11,
+                                         fontWeight="bold", color=cor_do_texto()).encode(
+        x=x, y="Topo:Q", text="Texto:N")
+    # Linha fina ligando o fim de um mês ao começo do seguinte
+    ligacoes = alt.Chart(dados.iloc[:-1].assign(Prox=ordem[1:])).mark_rule(
+        color="#8c8c8c", strokeWidth=0.8, strokeDash=[2, 2]).encode(
+        x=x, x2="Prox:N", y="Fim:Q")
+    zero = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color="#8c8c8c", strokeWidth=0.8) \
+        .encode(y="y:Q")
+    return (zero + ligacoes + barras + rotulos).properties(height=340)
 
 
 def _pct(v):
@@ -1236,8 +1268,10 @@ with corpo:
     # ----------------------------------------------------------------------------
     with tab_mes:
         mensal = resumo_mensal(df)
-        st.subheader("Entradas × Saídas por mês")
-        dica("Passe o mouse sobre as barras para ver os valores")
+        st.subheader("Quanto sobrou ou faltou em cada mês")
+        st.caption("Cada barra é o saldo do mês (entradas menos saídas), começando de onde o "
+                   "mês anterior terminou. A última mostra o acumulado do período.")
+        dica("Passe o mouse sobre as barras para ver entradas, saídas e o acumulado")
         st.altair_chart(grafico_mensal(mensal), width="stretch")
         st.dataframe(tabela_em_reais(mensal.assign(Mês=mensal["Mês"].map(rotulo_mes)),
                                      ["Entradas", "Saídas", "Saldo"]),

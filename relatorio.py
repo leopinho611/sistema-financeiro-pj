@@ -776,20 +776,17 @@ def _quebrar(texto, limite=12):
     return linhas
 
 
-def _grafico_cascata(cascata, altura=210):
-    """Do que entrou ao que sobrou: barra azul (entrou), degraus dourados (cada grupo de
-    gasto) e a barra cinza do resultado. Valor e nome junto de cada barra."""
+def _desenhar_degraus(itens, altura, legenda, linhas_nome=2):
+    """Gráfico em cascata genérico. itens: dicts com nome, de, ate, cor, rotulo e, opcional,
+    extra (lista de (texto, cor) escrita embaixo do nome)."""
     from reportlab.graphics.shapes import Line
-    passos = cascata["passos"]
-    n = len(passos) + 2
-    esq, dir_, base, topo_px = 36, LARGURA - 4, 30, altura - 22
+    n = len(itens)
+    sob_nome = 7.5 * linhas_nome + 7.5 * max((len(i.get("extra", [])) for i in itens), default=0)
+    esq, dir_, base, topo_px = 36, LARGURA - 4, 14 + sob_nome, altura - 24
     larg = (dir_ - esq) / n
     barra = larg * 0.62
-    niveis = [cascata["entradas"]]
-    for _, v in passos:
-        niveis.append(niveis[-1] - v)
-    vmin, vmax = min(0, min(niveis)), max(niveis + [cascata["entradas"]])
-    # Grade com valores redondos: passo "redondo" e limites em múltiplos dele
+    valores = [v for i in itens for v in (i["de"], i["ate"])]
+    vmin, vmax = min(0, min(valores)), max(0, max(valores))
     passo = _topo(vmax - vmin) / 4
     vmax = math.ceil(vmax / passo) * passo
     vmin = math.floor(vmin / passo) * passo if vmin < 0 else 0
@@ -807,41 +804,68 @@ def _grafico_cascata(cascata, altura=210):
                      fontSize=6, fillColor=CINZA, textAnchor="end"))
     if vmin < 0:
         d.add(Line(esq, y(0), dir_, y(0), strokeColor=CINZA, strokeWidth=0.6))
-
-    def coluna(i, de, ate, cor, nome, valor, sinal=""):
-        x = esq + i * larg + (larg - barra) / 2
-        baixo, alto = min(de, ate), max(de, ate)
-        d.add(Rect(x, y(baixo), barra, max(1, y(alto) - y(baixo)), fillColor=cor,
-                   strokeColor=None))
+    anterior = None
+    for k, it in enumerate(itens):
+        x = esq + k * larg + (larg - barra) / 2
         cx = x + barra / 2
-        d.add(String(cx, y(alto) + 3, sinal + _compacto(abs(valor)), fontName="Helvetica-Bold",
-                     fontSize=6.5, fillColor=MARINHO, textAnchor="middle"))
-        for k, linha in enumerate(_quebrar(nome)):
-            d.add(String(cx, base - 9 - k * 7.5, linha, fontName="Helvetica", fontSize=6,
+        if anterior is not None and it.get("liga", True):   # liga o fim do degrau anterior
+            d.add(Line(anterior[0], y(anterior[1]), x, y(anterior[1]), strokeColor=CINZA,
+                       strokeWidth=0.4))
+        baixo, alto = min(it["de"], it["ate"]), max(it["de"], it["ate"])
+        d.add(Rect(x, y(baixo), barra, max(1, y(alto) - y(baixo)), fillColor=it["cor"],
+                   strokeColor=None))
+        d.add(String(cx, y(alto) + 3, it["rotulo"], fontName="Helvetica-Bold", fontSize=6.5,
+                     fillColor=MARINHO, textAnchor="middle"))
+        linhas = _quebrar(it["nome"]) if linhas_nome > 1 else [it["nome"]]
+        for q, linha in enumerate(linhas):
+            d.add(String(cx, base - 9 - q * 7.5, linha, fontName="Helvetica", fontSize=6,
                          fillColor=MARINHO, textAnchor="middle"))
-        return x
-
-    x_ant = coluna(0, 0, cascata["entradas"], COR_ENTRADAS, "Entrou", cascata["entradas"])
-    nivel = cascata["entradas"]
-    for i, (nome, v) in enumerate(passos, start=1):
-        # linha fina ligando o fim de um degrau ao começo do próximo
-        x = esq + i * larg + (larg - barra) / 2
-        d.add(Line(x_ant + barra, y(nivel), x, y(nivel), strokeColor=CINZA, strokeWidth=0.4))
-        x_ant = coluna(i, nivel, nivel - v, COR_SAIDAS, nome, v, "-")
-        nivel -= v
-    res = cascata["resultado"]
-    x = esq + (n - 1) * larg + (larg - barra) / 2
-    d.add(Line(x_ant + barra, y(nivel), x, y(nivel), strokeColor=CINZA, strokeWidth=0.4))
-    coluna(n - 1, 0, res, COR_TOTAL, "Sobrou" if res >= 0 else "Faltou", res,
-           "" if res >= 0 else "-")
-    # Legenda
-    for k, (nome, cor) in enumerate([("Entrou", COR_ENTRADAS), ("Saiu", COR_SAIDAS),
-                                     ("Resultado", COR_TOTAL)]):
-        lx = esq + k * 70
+        for q, (texto, cor) in enumerate(it.get("extra", [])):
+            d.add(String(cx, base - 9 - (len(linhas) + q) * 7.5, texto, fontName="Helvetica",
+                         fontSize=5.8, fillColor=cor, textAnchor="middle"))
+        anterior = (x + barra, it["ate"])
+    for k, (nome, cor) in enumerate(legenda):
+        lx = esq + k * 90
         d.add(Rect(lx, altura - 9, 8, 8, fillColor=cor, strokeColor=None))
         d.add(String(lx + 11, altura - 8, nome, fontName="Helvetica", fontSize=7,
                      fillColor=MARINHO))
     return d
+
+
+def _grafico_cascata(cascata, altura=210):
+    """Do que entrou ao que sobrou: barra azul (entrou), degraus dourados (cada grupo de
+    gasto) e a barra cinza do resultado."""
+    itens = [{"nome": "Entrou", "de": 0, "ate": cascata["entradas"], "cor": COR_ENTRADAS,
+              "rotulo": _compacto(cascata["entradas"])}]
+    nivel = cascata["entradas"]
+    for nome, v in cascata["passos"]:
+        itens.append({"nome": nome, "de": nivel, "ate": nivel - v, "cor": COR_SAIDAS,
+                      "rotulo": "-" + _compacto(v)})
+        nivel -= v
+    res = cascata["resultado"]
+    itens.append({"nome": "Sobrou" if res >= 0 else "Faltou", "de": 0, "ate": res,
+                  "cor": COR_TOTAL, "rotulo": ("" if res >= 0 else "-") + _compacto(abs(res))})
+    return _desenhar_degraus(itens, altura, [("Entrou", COR_ENTRADAS), ("Saiu", COR_SAIDAS),
+                                             ("Resultado", COR_TOTAL)])
+
+
+def _grafico_cascata_mensal(mensal, altura=250):
+    """Mês a mês: cada mês sobe (sobrou) ou desce (faltou) a partir de onde o anterior
+    terminou; embaixo do mês, quanto entrou (E) e saiu (S); no fim, o acumulado."""
+    itens, nivel = [], 0.0
+    for _, m in mensal.iterrows():
+        saldo = m["Entradas"] - m["Saídas"]
+        itens.append({"nome": rotulo_mes(m["Mês"]), "de": nivel, "ate": nivel + saldo,
+                      "cor": COR_ENTRADAS if saldo >= 0 else COR_SAIDAS,
+                      "rotulo": ("+" if saldo >= 0 else "-") + _compacto(abs(saldo)),
+                      "extra": [(f"E {_compacto(m['Entradas'])}", COR_ENTRADAS),
+                                (f"S {_compacto(m['Saídas'])}", COR_SAIDAS)]})
+        nivel += saldo
+    itens.append({"nome": "Acumulado", "de": 0, "ate": nivel, "cor": COR_TOTAL,
+                  "rotulo": ("+" if nivel >= 0 else "-") + _compacto(abs(nivel))})
+    return _desenhar_degraus(itens, altura, [("Sobrou no mês", COR_ENTRADAS),
+                                             ("Faltou no mês", COR_SAIDAS),
+                                             ("Acumulado", COR_TOTAL)], linhas_nome=1)
 
 
 def _pagina1(dados, e):
@@ -875,10 +899,11 @@ def _pagina1(dados, e):
 def _pagina_mes_a_mes(dados, e):
     mensal = dados["mensal"]
     h = [Paragraph("Mês a mês e aplicações", e["titulo"]),
-         Paragraph("Entrou e saiu, mês a mês", e["sub"]),
-         _grafico_linhas([("Entrou", COR_ENTRADAS, dict(zip(mensal["Mês"], mensal["Entradas"]))),
-                          ("Saiu", COR_SAIDAS, dict(zip(mensal["Mês"], mensal["Saídas"])))],
-                         list(mensal["Mês"]), altura=250, largura_nomes=60),
+         Paragraph("Quanto sobrou ou faltou em cada mês", e["sub"]),
+         Paragraph("Cada barra é o saldo do mês (entradas menos saídas), começando de onde o mês "
+                   "anterior terminou. Embaixo de cada mês: quanto entrou (E) e saiu (S). A "
+                   "última barra é o acumulado do período.", e["pequeno"]), Spacer(1, 4),
+         _grafico_cascata_mensal(mensal),
          Paragraph("Aplicações", e["sub"])]
     a = dados["aplicacoes"]
     if not a["tem"]:
