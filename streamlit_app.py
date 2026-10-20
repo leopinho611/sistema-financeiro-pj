@@ -4,7 +4,10 @@ from zoneinfo import ZoneInfo
 from html import escape
 from urllib.parse import quote
 
+import copy
+import hashlib
 import hmac
+import pickle
 import importlib
 import secrets
 import sys
@@ -138,7 +141,7 @@ st.markdown(f"""
       background: color-mix(in srgb, {DESTAQUE} 16%, transparent); border-left-color: {DOURADO}; }}
   .st-key-menu [data-testid="stRadioOption"][data-selected="true"] p {{ font-weight: 600; }}
   /* Barra do topo: visões do Painel no meio, período e filtros à direita */
-  .st-key-visoes [data-testid="stButtonGroup"] {{ display: flex; justify-content: center; }}
+  .st-key-visoes [data-testid="stButtonGroup"] {{ display: flex; }}
   .st-key-visoes [data-testid="stButtonGroup"] > div {{ border-radius: 999px; padding: 3px;
       border: 1px solid color-mix(in srgb, {ARDOSIA} 80%, transparent); }}
   .st-key-visoes button {{ border-radius: 999px !important; border: none !important;
@@ -151,9 +154,18 @@ st.markdown(f"""
   .st-key-filtros_btn button:hover {{ background: #d8b23a; color: {MARINHO}; }}
   .st-key-periodo [data-baseweb="input"] {{ border-radius: 999px; }}
   /* Faixa verde com os arquivos lidos à direita */
+  .st-key-faixa_aviso {{ background: color-mix(in srgb, #fab219 16%, transparent);
+      border: 1px solid color-mix(in srgb, #fab219 60%, transparent); border-radius: 8px;
+      padding: .2rem .4rem .2rem .9rem; min-height: 3rem; justify-content: center; }}
+  .st-key-faixa_aviso [data-testid="stMarkdownContainer"] {{ margin-bottom: 0; }}
+  .st-key-faixa_aviso [data-testid="stHorizontalBlock"] {{ align-items: center; }}
+  .st-key-faixa_aviso [data-testid="stPopover"] {{ display: flex; justify-content: flex-end; }}
+  .st-key-faixa_aviso button {{ border: none; background: transparent; }}
+  .st-key-barra_filtros {{ margin: .3rem 0 .2rem 0; }}
+  .st-key-faixa_ok {{ min-height: 3rem; justify-content: center; }}
   .st-key-faixa_ok {{ background: color-mix(in srgb, #0ca30c 16%, transparent);
       border: 1px solid color-mix(in srgb, #0ca30c 55%, transparent); border-radius: 8px;
-      padding: .2rem .4rem .2rem .9rem; margin-bottom: .4rem; }}
+      padding: .2rem .4rem .2rem .9rem; margin-bottom: 0; }}
   .st-key-faixa_ok [data-testid="stHorizontalBlock"] {{ align-items: center; }}
   .st-key-faixa_ok p {{ margin: 0; }}
   .st-key-faixa_ok [data-testid="stMarkdownContainer"] {{ margin-bottom: 0; }}
@@ -681,6 +693,41 @@ def relatorio_de_exemplo():
     return exemplo.relatorio_exemplo()
 
 
+def na_sessao(nome, chave, calcular, guardar=8):
+    """Guarda o resultado na memória da sessão, para os cliques seguintes não refazerem a
+    leitura dos extratos. Fica só na sessão (some ao fechar o app), nunca num cache do
+    servidor compartilhado. Erros também são lembrados e repetidos."""
+    memoria = st.session_state.setdefault("_memoria", {}).setdefault(nome, {})
+    k = chave
+    if k not in memoria:
+        try:
+            memoria[k] = ("ok", calcular())
+        except Exception as e:  # noqa: BLE001 - o erro volta para quem chamou
+            memoria[k] = ("erro", e)
+        while len(memoria) > guardar:
+            memoria.pop(next(iter(memoria)))
+    situacao, valor = memoria[k]
+    if situacao == "erro":
+        raise valor
+    # Cópia: quem recebe pode alterar as tabelas sem mexer no que ficou guardado
+    return copy.deepcopy(valor)
+
+
+def impressao(*partes):
+    """Identificador curto do conteúdo (bytes, tabelas, textos), para usar como chave."""
+    h = hashlib.sha256()
+    for p in partes:
+        if isinstance(p, bytes):
+            h.update(p)
+        elif isinstance(p, pd.DataFrame):
+            h.update(pd.util.hash_pandas_object(p, index=False).values.tobytes())
+            h.update(repr(list(p.columns)).encode())
+        else:
+            h.update(pickle.dumps(p))
+        h.update(b"|")
+    return h.hexdigest()
+
+
 @st.cache_data(ttl=7 * 24 * 3600, show_spinner=False)
 def consultar_cnpj_cache(cnpj):
     return consultar_cnpj(cnpj)
@@ -1091,10 +1138,13 @@ with corpo:
             secao_ajuda()
         st.stop()
 
-    # Barra do topo (período e filtros), preenchida depois de ler os extratos
+    # Logo abaixo do título: a faixa verde e o aviso dos arquivos não importados; depois, os
+    # filtros, junto dos gráficos. Preenchidos depois de ler os extratos
+    faixas = st.container()
     barra_topo = st.container()
     tabelas = []
     leitura = []
+    ids_lidos, colunas_usadas = [], []   # identificam o que foi lido, para a memória
     titulares = []   # nome do titular, quando o PDF traz (Sicredi, XP)
     layouts = {}   # extratos com as mesmas colunas compartilham a identificação
     # CSV/Excel primeiro, depois OFX e PDF: quando o mesmo mês vem em mais de um formato,
@@ -1126,7 +1176,12 @@ with corpo:
                       key=lambda a: ORDEM_FORMATO.get(a.name.lower().rsplit(".", 1)[-1], 3))
     for arquivo in arquivos:
         try:
-            r = carregar_arquivo(arquivo.name, arquivo.getvalue())
+            conteudo = arquivo.getvalue()
+            id_arquivo = impressao(arquivo.name, conteudo)
+            r = na_sessao("arquivo", id_arquivo,
+                          lambda: carregar_arquivo(arquivo.name, conteudo), guardar=400)
+            r["id"] = id_arquivo
+            ids_lidos.append(id_arquivo)
         except SemLancamentos as e:
             leitura.append({"Arquivo": arquivo.name, "Conta": e.conta, "Situação": f"➖ {e}"})
             continue
@@ -1143,30 +1198,69 @@ with corpo:
         else:
             layouts.setdefault(tuple(r["bruto"].columns), []).append(r)
 
-    for n, (cols, grupo) in enumerate(layouts.items()):
+    def colunas_de(sugestao):
+        return {"data": sugestao["data"], "descricao": sugestao["descricao"],
+                "valor": None if sugestao["credito"] else sugestao["valor"],
+                "credito": sugestao["credito"], "debito": sugestao["debito"]}
+
+    def montar(r, colunas):
+        return na_sessao("colunas", (r["id"], repr(sorted(colunas.items()))),
+                         lambda: montar_transacoes(r["bruto"], colunas, r["conta"]),
+                         guardar=400)
+
+    # Primeiro só identifica as colunas de cada formato de planilha; quem precisa de ajuda
+    # vai para o aviso amarelo, ao lado da faixa verde
+    grupos = []
+    for cols, grupo in layouts.items():
+        sugestao = detectar_colunas(grupo[0]["bruto"])
+        completo = bool(sugestao["data"] and sugestao["descricao"]
+                        and (sugestao["valor"] or sugestao["credito"]))
+        if completo:
+            try:
+                montar(grupo[0], colunas_de(sugestao))
+            except ValueError:
+                completo = False
+        grupos.append((cols, grupo, sugestao, completo))
+    nao_lidos = [x for x in leitura if x["Situação"].startswith("⚠️")]
+    a_ajustar = [g for g in grupos if not g[3]]
+    qtd_aviso = len(nao_lidos) + sum(len(g[1]) for g in a_ajustar)
+    with faixas:
+        if qtd_aviso:
+            lugar_verde, lugar_amarelo = st.columns([1.6, 1], gap="small")
+        else:
+            lugar_verde, lugar_amarelo = st.container(), None
+    detalhes_aviso = None
+    if lugar_amarelo:
+        with lugar_amarelo, st.container(key="faixa_aviso"):
+            a1, a2 = st.columns([2, 1], vertical_alignment="center")
+            a1.markdown(f"⚠️ {qtd_aviso} arquivo(s) não importado(s)")
+            detalhes_aviso = a2.popover("Ver detalhes", type="tertiary")
+        with detalhes_aviso:
+            if nao_lidos:
+                st.markdown("**Não foi possível ler**")
+                # Mesmo motivo para vários arquivos (ex.: 30 XMLs de nota) numa linha só
+                motivos = (pd.DataFrame(nao_lidos).groupby("Situação", sort=False)["Arquivo"]
+                           .agg(lambda a: a.iat[0] if len(a) == 1 else
+                                f"{len(a)} arquivos ({', '.join(a.head(2))}...)")
+                           .reset_index())
+                st.dataframe(motivos[["Arquivo", "Situação"]], hide_index=True, width=760)
+            if a_ajustar:
+                st.markdown("**Colunas não reconhecidas** · indique onde estão a data, a "
+                            "descrição e o valor")
+
+    for n, (cols, grupo, sugestao, completo) in enumerate(grupos):
         bruto0 = grupo[0]["bruto"]
-        sugestao = detectar_colunas(bruto0)
         opcoes = ["—"] + list(cols)
 
         def indice(coluna):
             return opcoes.index(coluna) if coluna in opcoes else 0
 
-        completo = sugestao["data"] and sugestao["descricao"] and (sugestao["valor"] or sugestao["credito"])
-        colunas = {"data": sugestao["data"], "descricao": sugestao["descricao"],
-                   "valor": None if sugestao["credito"] else sugestao["valor"],
-                   "credito": sugestao["credito"], "debito": sugestao["debito"]}
-        if completo:
-            try:
-                montar_transacoes(bruto0, colunas, grupo[0]["conta"])
-            except ValueError:
-                completo = False
+        colunas = colunas_de(sugestao)
         # Só pede ajuda quando as colunas não foram reconhecidas
         if not completo:
-            nomes = ", ".join(r["nome"] for r in grupo)
-            st.warning(f"Não reconhecemos todas as colunas de {nomes}. Indique abaixo onde "
-                       "estão a data, a descrição e o valor.", icon="⚙️")
-            with st.expander(f"⚙️ Colunas — {grupo[0]['conta']} ({len(grupo)} arquivo(s))",
-                             expanded=True):
+            with detalhes_aviso, st.expander(
+                    f"⚙️ {grupo[0]['conta']} ({len(grupo)} arquivo(s))"):
+                st.caption(", ".join(r["nome"] for r in grupo))
                 c1, c2 = st.columns(2)
                 col_data = c1.selectbox("Data", opcoes, index=indice(sugestao["data"]),
                                         key=f"data{n}")
@@ -1190,20 +1284,21 @@ with corpo:
                     col_deb = c4.selectbox("Débito (saídas)", opcoes,
                                            index=indice(sugestao["debito"]), key=f"deb{n}")
                     col_valor = "—"
-                st.dataframe(bruto0.head(5), width="stretch")
+                st.dataframe(bruto0.head(5), width=620)
             colunas = {k: (None if v == "—" else v) for k, v in
                        {"data": col_data, "valor": col_valor,
                         "credito": col_cred, "debito": col_deb}.items()}
             colunas["descricao"] = col_desc
+        colunas_usadas.append(repr(sorted(colunas.items())))
         for r in grupo:
             try:
-                t = montar_transacoes(r["bruto"], colunas, r["conta"])
+                t = montar(r, colunas)
                 tabelas.append(t)
                 leitura.append({"Arquivo": r["nome"], "Conta": r["conta"],
                                 "Situação": f"✅ {len(t)} lançamentos"})
             except ValueError as e:
                 leitura.append({"Arquivo": r["nome"], "Conta": r["conta"],
-                                "Situação": f"⚠️ {e} (ajuste em ⚙️ Colunas)"})
+                                "Situação": f"⚠️ {e} (ajuste em ⚠️ Ver detalhes)"})
 
     # Sem o nome digitado, usa o titular que veio no extrato (para achar as transferências
     # entre as próprias contas)
@@ -1224,16 +1319,18 @@ with corpo:
                  "extratos. As análises gratuitas continuam disponíveis.", icon="🔒")
     if len({chave_fornecedor(x) for x in titulares}) > 1:
         st.info("Os extratos enviados são de titulares diferentes.", icon="ℹ️")
-    todos = consolidar(tabelas, titular_usado)
     # Regras lembradas (compartilhadas + pessoais) vencem as palavras-chave
     regras_comp = regras_compartilhadas(st.session_state["versao_regras"])
     regras_todas = juntar(juntar(juntar(regras_comp, regras_privadas),
                                  st.session_state["regras_sessao"]),
                           st.session_state["regras_pessoais"])
-    todos = aplicar_regras(todos, regras_todas)
+    chave_todos = impressao(ids_lidos, colunas_usadas, titular_usado, regras_todas)
+    todos = na_sessao("todos", chave_todos,
+                      lambda: aplicar_regras(consolidar(tabelas, titular_usado), regras_todas))
 
     if todos.empty:
-        st.warning("Nenhuma transação encontrada. Confira os arquivos e as colunas acima.")
+        st.warning("Nenhuma transação encontrada. Confira os arquivos e as colunas em "
+                   "⚠️ Ver detalhes.")
         st.dataframe(pd.DataFrame(leitura), hide_index=True, width="stretch")
         st.stop()
 
@@ -1253,23 +1350,25 @@ with corpo:
     # Barra do topo: título da página (ou as visões do Painel), período e filtros
     contas = sorted(todos["Conta"].unique())
     inicio, fim = todos["Data"].min().date(), todos["Data"].max().date()
-    with barra_topo:
-        t1, t2, t3, t4 = st.columns([1.2, 2.2, 1.5, .6], vertical_alignment="center")
+    # Filtros juntos numa linha: visão do Painel (ou o nome da página), período e contas
+    with barra_topo, st.container(key="barra_filtros", horizontal=True,
+                                  vertical_alignment="center", gap="small"):
         if pagina == PAINEL:
-            with t2, st.container(key="visoes"):
+            with st.container(key="visoes", width="content"):
                 visao = st.segmented_control("Visão", ["Resumo", "Entradas", "Saídas"],
                                              default="Resumo", required=True,
                                              label_visibility="collapsed", key="visao",
                                              persist_state="page")
         else:
-            t1.markdown(f'<p class="titulo-pagina">{escape(pagina)}</p>', unsafe_allow_html=True)
-        with t3, st.container(key="periodo"):
+            st.markdown(f'<p class="titulo-pagina">{escape(pagina)}</p>',
+                        unsafe_allow_html=True, width="content")
+        with st.container(key="periodo", width=270):
             periodo_sel = st.date_input("📅 Período", value=(inicio, fim), min_value=inicio,
                                         max_value=fim, format="DD/MM/YYYY",
                                         label_visibility="collapsed", key="periodo_sel",
                                         persist_state="page")
-        with t4, st.container(key="filtros_btn"):
-            with st.popover("⚙ Filtros", width="stretch"):
+        with st.container(key="filtros_btn", width="content"):
+            with st.popover("⚙ Filtros"):
                 filtro_contas = st.multiselect("Contas", contas, default=contas,
                                                key="filtro_contas", persist_state="page")
 
@@ -1280,18 +1379,23 @@ with corpo:
         st.warning("Nenhuma transação com esses filtros.")
         st.stop()
 
+    # Identifica os dados na tela (extratos, regras, contas e período), para a memória
+    chave_filtros = (chave_todos, tuple(filtro_contas), str(periodo_sel))
     internas = df[df["Tipo"] == "Interna"]
     periodo = f"{df['Data'].min():%d/%m/%Y} a {df['Data'].max():%d/%m/%Y}"
-    with st.container(key="faixa_ok"):
-        f1, f2 = st.columns([4, 1.3], vertical_alignment="center")
-        f1.markdown(f"✅ {len(df) - len(internas)} transações de {periodo} "
-                    f"({len(internas)} movimentações internas à parte)")
+    with lugar_verde, st.container(key="faixa_ok"):
+        f1, f2 = st.columns([3, 1.2], vertical_alignment="center")
+        f1.markdown(f"✅ {len(df) - len(internas)} transações de {periodo}",
+                    help=f"{len(internas)} movimentações internas (aplicações, transferências "
+                         "entre suas contas, pagamento de fatura) ficam à parte.")
         with f2.popover(f"📂 Arquivos lidos ({len(arquivos)})", type="tertiary"):
             st.dataframe(pd.DataFrame(leitura), hide_index=True, width=620)
-    problemas = [x["Arquivo"] for x in leitura if x["Situação"].startswith("⚠️")]
-    if problemas:
-        st.warning(f"Não foi possível ler: {', '.join(problemas)}. Veja os detalhes em "
-                   "📂 Arquivos lidos.", icon="⚠️")
+    # Erro que só apareceu ao montar com as colunas escolhidas (fora do aviso amarelo)
+    novos_erros = [x["Arquivo"] for x in leitura if x["Situação"].startswith("⚠️")
+                   and x not in nao_lidos]
+    if novos_erros and not a_ajustar:
+        st.warning(f"Não foi possível ler: {', '.join(novos_erros)}. Veja em 📂 Arquivos lidos.",
+                   icon="⚠️")
 
     entradas = df.loc[df["Tipo"] == "Entrada", "Valor"].sum()
     saidas = -df.loc[df["Tipo"] == "Saída", "Valor"].sum()
@@ -1308,8 +1412,11 @@ with corpo:
     # Recorrentes, parcelas e IR olham todo o histórico das contas escolhidas (o filtro
     # de período cortaria parcelas e meses); a saúde financeira segue o período
     df_contas = todos[todos["Conta"].isin(filtro_contas)]
-    recorrentes = plus.gastos_recorrentes(df_contas)
-    parcelas, cronograma = plus.parcelas_futuras(df_contas)
+    chave_contas = (chave_todos, tuple(filtro_contas))
+    recorrentes = na_sessao("recorrentes", chave_contas,
+                            lambda: plus.gastos_recorrentes(df_contas))
+    parcelas, cronograma = na_sessao("parcelas", chave_contas,
+                                     lambda: plus.parcelas_futuras(df_contas))
     compromissos = plus.compromissos_mensais(recorrentes)
     parcelas_proximo = float(cronograma["Valor"].iloc[0]) if not cronograma.empty else 0.0
     anos_ir = sorted(df_contas["Data"].dt.year.unique(), reverse=True)
@@ -1407,11 +1514,11 @@ with corpo:
                     st.info("Não há entradas no período.")
                 else:
                     st.markdown(ranking_html(tipos_entrada, "Entrada"), unsafe_allow_html=True)
-                dica("Os detalhes, com quem pagou, estão em Entradas (no alto da página)")
+                dica("Os detalhes, com quem pagou, estão em Entradas (logo acima)")
         with dir_:
             painel_ciano("Para onde vai", "Maiores categorias de gasto", cats, "Saída",
                          "Os detalhes, com subcategorias e fornecedores, estão em Saídas "
-                         "(no alto da página)")
+                         "(logo acima)")
 
         if not internas.empty:
             st.subheader("Movimentações internas")
@@ -1464,8 +1571,10 @@ with corpo:
                     titulo_painel("Quem pagou", "por tipo de entrada")
                     dica("Clique num tipo para ver quem mais pagou · nas linhas abertas, "
                          "o % é sobre o tipo")
-                    st.markdown(tabela_categorias_html(tipos_sel, df_e, tipo="Entrada",
-                                                       rotulo="Tipo de entrada"),
+                    st.markdown(na_sessao("detalhe", (chave_filtros, "Entrada", tuple(sel)),
+                                          lambda: tabela_categorias_html(
+                                              tipos_sel, df_e, tipo="Entrada",
+                                              rotulo="Tipo de entrada")),
                                 unsafe_allow_html=True)
 
     # ----------------------------------------------------------------------------
@@ -1506,7 +1615,8 @@ with corpo:
                     titulo_painel("Para quem foi", "categoria → subcategoria → fornecedor")
                     dica("Clique numa categoria para abrir as subcategorias e os maiores "
                          "fornecedores · nas linhas abertas, o % é sobre o grupo de cima")
-                    st.markdown(tabela_categorias_html(cats_sel, df_s),
+                    st.markdown(na_sessao("detalhe", (chave_filtros, "Saída", tuple(sel)),
+                                          lambda: tabela_categorias_html(cats_sel, df_s)),
                                 unsafe_allow_html=True)
 
                 sem_id = [nao_identificado(c, sc) for c, sc in

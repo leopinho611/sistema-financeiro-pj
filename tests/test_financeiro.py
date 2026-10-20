@@ -821,3 +821,15 @@ def test_extrato_xp_pdf():
                                        "PAGAMENTO DE FATURA"]
     assert t["Fornecedor"].iat[2].startswith("Casa Do Bolo")
     assert t["Data"].dt.year.unique().tolist() == [2026]
+
+
+def test_xml_de_nota_e_outros_formatos_sao_recusados():
+    """XML de nota fiscal (comum dentro de .zip) e imagens não viram planilha."""
+    from financeiro import carregar_arquivo
+    with pytest.raises(ValueError, match="XML"):
+        carregar_arquivo("NFe123.xml", b'<?xml version="1.0"?><nfeProc></nfeProc>')
+    with pytest.raises(ValueError, match="png"):
+        carregar_arquivo("foto.png", b"\x89PNG\r\n")
+    # CSV continua sendo lido como planilha
+    r = carregar_arquivo("extrato.csv", "Data;Descrição;Valor\n01/09/2026;PADARIA;-10,00\n".encode())
+    assert r["tipo"] == "tabela"
