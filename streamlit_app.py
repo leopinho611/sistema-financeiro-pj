@@ -5,6 +5,7 @@ from html import escape
 from urllib.parse import quote
 
 import copy
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import hmac
 import pickle
@@ -168,15 +169,17 @@ st.markdown(f"""
   .st-key-faixa_ok [data-testid="stMarkdownContainer"] {{ margin-bottom: 0; }}
   .st-key-faixa_ok [data-testid="stPopover"] {{ display: flex; justify-content: flex-end; }}
   /* Cartões de números do Painel */
-  .kpis {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .8rem;
+  .kpis {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); gap: .8rem;
            margin-bottom: 1rem; }}
   .kpi {{ background: {CARTAO_FUNDO}; border-radius: 10px; padding: .75rem .9rem;
-          border: 1px solid color-mix(in srgb, {DESTAQUE} 40%, transparent); min-width: 0; }}
+          border: 1px solid color-mix(in srgb, {DESTAQUE} 40%, transparent); min-width: 0;
+          container-type: inline-size; }}
   .kpi .rot {{ font-weight: 600; font-size: .88rem; display: flex; gap: .45rem;
                align-items: center; }}
   .kpi .ico {{ background: color-mix(in srgb, {DESTAQUE} 18%, transparent); border-radius: 6px;
                padding: .05rem .3rem; }}
-  .kpi .val {{ font-size: clamp(1.05rem, 1.55vw, 1.5rem); font-weight: 700; white-space: nowrap;
+  /* O valor diminui com a largura do cartão, para caber inteiro (ex.: R$ 140.779,00) */
+  .kpi .val {{ font-size: clamp(.9rem, 12.5cqi, 1.5rem); font-weight: 700; white-space: nowrap;
                font-variant-numeric: tabular-nums; margin: .35rem 0 .1rem 0; overflow: hidden;
                text-overflow: ellipsis; }}
   .kpi .val.neg {{ color: {"#ff8a80" if ESCURO else "#c62828"}; }}
@@ -189,7 +192,16 @@ st.markdown(f"""
       border-radius: 999px; padding: .1rem .55rem; margin-left: .5rem; vertical-align: middle; }}
   .st-key-painel_ciano {{ background: linear-gradient(170deg, #7fe2ff 0%, #3fa7d6 55%, #2f7fb0 100%);
       color: {MARINHO}; border-radius: 12px; padding: 1rem 1.1rem 1.2rem 1.1rem;
-      box-sizing: border-box; }}
+      box-sizing: border-box; container-type: inline-size; }}
+  /* Painel estreito: o nome numa linha, o valor e o % embaixo (classe dobrada para vencer
+     as regras do painel, que vêm depois) */
+  @container (max-width: 300px) {{
+    .st-key-painel_ciano.st-key-painel_ciano .tabcat .linha {{ grid-template-columns: 1fr auto; row-gap: .1rem; }}
+    .st-key-painel_ciano.st-key-painel_ciano .tabcat .linha .nome {{ grid-column: 1 / -1; }}
+    .st-key-painel_ciano.st-key-painel_ciano .tabcat .linha > .num:not(.qtd) {{ text-align: left; }}
+    .st-key-painel_ciano.st-key-painel_ciano .tabcat .linha .pct {{ min-width: 3.4rem; justify-content: flex-end; }}
+    .st-key-painel_ciano.st-key-painel_ciano .tabcat .linha .pct b {{ text-align: right; }}
+  }}
   .st-key-painel_ciano * {{ color: {MARINHO}; }}
   .st-key-painel_ciano h3 {{ margin: 0; padding: 0 0 .2rem 0; }}
   .st-key-painel_ciano .sub-titulo {{ font-size: .72rem; letter-spacing: .12em; font-weight: 700;
@@ -201,6 +213,7 @@ st.markdown(f"""
   .st-key-painel_ciano .tabcat .pct .trilho {{ position: absolute; left: 0; right: 0; bottom: 3px;
       height: 4px; }}
   .st-key-painel_ciano .tabcat .pct b {{ min-width: 0; width: 100%; }}
+  .st-key-painel_ciano .tabcat .num, .st-key-painel_ciano .tabcat .pct b {{ white-space: nowrap; }}
   .st-key-painel_ciano .dica {{ font-size: .78rem; margin-top: .6rem; }}
   .st-key-painel_ciano .tabcat .linha .nome {{ text-transform: lowercase; display: inline-block; }}
   .st-key-painel_ciano .tabcat .linha .nome::first-letter {{ text-transform: uppercase; }}
@@ -218,6 +231,11 @@ st.markdown(f"""
   [class*="st-key-todos_nenhum"] [data-testid="stBaseButton-tertiary"] {{ border: none; background: transparent; padding: 0 .3rem;
       min-height: 0; opacity: .75; }}
   [class*="st-key-todos_nenhum"] {{ flex-wrap: wrap; row-gap: .2rem; }}
+  /* As pílulas quebram em várias linhas em vez de passar da tela */
+  [class*="st-key-todos_nenhum"] > div:has([data-testid="stButtonGroup"]) {{
+      flex: 0 1 auto; min-width: 0; max-width: 100%; }}
+  [class*="st-key-todos_nenhum"] [data-testid="stButtonGroup"] [role="group"],
+  [class*="st-key-todos_nenhum"] [data-testid="stButtonGroup"] > div {{ flex-wrap: wrap; }}
   [class*="st-key-todos_nenhum"] p {{ font-size: .82rem; }}
   .st-key-ir_plus button {{ border: 1px solid {DOURADO}; color: {DOURADO}; border-radius: 999px;
       background: transparent; font-weight: 700; }}
@@ -344,7 +362,6 @@ st.markdown(f"""
     .cabecalho {{ flex-direction: column; align-items: stretch; gap: .2rem; }}
     .cabecalho h1 {{ font-size: 2rem; }}
     .kpis {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
-    .kpi .val {{ font-size: 1.15rem; }}
   }}
 </style>
 <div class="cabecalho">
@@ -731,8 +748,44 @@ def impressao(*partes):
 
 
 @st.cache_data(ttl=7 * 24 * 3600, show_spinner=False)
+def _cnpj_guardado(cnpj):
+    info = consultar_cnpj(cnpj)
+    if info is None:
+        raise LookupError(cnpj)   # erro não fica no cache: tenta de novo da próxima vez
+    return info
+
+
 def consultar_cnpj_cache(cnpj):
-    return consultar_cnpj(cnpj)
+    """Dados públicos do CNPJ (guardados por uma semana), ou None se a consulta falhar."""
+    try:
+        return _cnpj_guardado(cnpj)
+    except LookupError:
+        return None
+
+
+MAX_CNPJ_POR_VEZ = 60
+
+
+def consultar_cnpj_cache_sem_contexto(cnpj):
+    """Para as consultas em paralelo (fora da execução da página): usa a mesma memória de
+    uma semana quando dá, senão consulta direto."""
+    try:
+        return consultar_cnpj_cache(cnpj)
+    except Exception:  # noqa: BLE001 - sem o contexto do Streamlit, consulta sem memória
+        return consultar_cnpj(cnpj)
+
+
+def cnpjs_pendentes(t, regras):
+    """Fornecedores de saída sem categoria (ou só "transferência") que ainda não têm regra e
+    trazem CNPJ na descrição: [chave, CNPJ, Fornecedor]."""
+    s = t[t["Tipo"] == "Saída"]
+    s = s.assign(chave=s["FornecedorOriginal"].map(chave_fornecedor),
+                 CNPJ=s["Descrição"].map(extrair_cnpj))
+    pendente = pd.Series([c == "TRANSFERÊNCIA" or nao_identificado(c, sc) for c, sc in
+                          zip(s["Categoria"], s["Subcategoria"])], index=s.index, dtype=bool)
+    s = s[pendente & ~s["chave"].isin(set(regras["chave"])) & s["CNPJ"].notna()]
+    return (s.groupby(["chave", "CNPJ"], as_index=False)
+            .agg(Fornecedor=("Fornecedor", "first")))
 
 
 def salvar_regras(novas_comp, novas_pess, descricao):
@@ -915,7 +968,8 @@ def secao_ajuda():
          "fechar. O que fica guardado são as classificações que você salvar (nome da empresa → "
          "categoria), sem valores nem datas."),
         ("Uma categoria está errada.",
-         "Na área aberta, a página **🔎 Consultar CNPJ** ajuda com Pix para empresas. No Plus, a "
+         "Na área aberta, a página **🔎 Consultar CNPJ** mostra os Pix para empresas que o app "
+         "classificou pela Receita, para conferir e mudar. No Plus, a "
          "página **⭐ Classificar** corrige qualquer fornecedor e o app lembra nas próximas vezes."),
         ("Como funciona o código Plus?",
          "Depois do pagamento, você recebe um código pelo WhatsApp ou e-mail. No menu lateral, "
@@ -1330,6 +1384,51 @@ with corpo:
     todos = na_sessao("todos", chave_todos,
                       lambda: aplicar_regras(consolidar(tabelas, titular_usado), regras_todas))
 
+    # Pix para empresas sem categoria: o CNPJ da descrição é consultado na Receita (dados
+    # públicos) e a categoria vem da atividade principal (CNAE), sem precisar pedir. Vale até
+    # fechar o app; em 🔎 Consultar CNPJ dá para conferir e mudar
+    tentados = st.session_state.setdefault("cnpj_tentados", set())
+    novos = cnpjs_pendentes(todos, regras_todas)
+    novos = novos[~novos["CNPJ"].isin(tentados)].head(MAX_CNPJ_POR_VEZ)
+    if not novos.empty:
+        with st.spinner(f"🔎 Consultando {len(novos)} CNPJ(s) na Receita para classificar os "
+                        "Pix para empresas..."):
+            with ThreadPoolExecutor(max_workers=6) as ex:
+                infos = list(ex.map(consultar_cnpj_cache_sem_contexto, novos["CNPJ"]))
+        regras_auto, linhas = [], []
+        for r, info in zip(novos.itertuples(), infos):
+            tentados.add(r.CNPJ)
+            sugestao = categoria_do_cnae(info["cnae"]) if info else None
+            categoria, sub_ = sugestao if sugestao else (CATEGORIA_PADRAO, SUB_NAO_IDENTIFICADO)
+            validas = subcategorias_de(categoria)
+            sub_ = sub_ if sub_ in validas else validas[-1]
+            nome = (info["nome"] if info and info["nome"] else r.Fornecedor)
+            if sugestao:
+                regras_auto.append(nova_regra(r.chave, nome, categoria, sub_, "cnpj", r.CNPJ,
+                                              info["cnae"]))
+            linhas.append({
+                "chave": r.chave, "Fornecedor": r.Fornecedor, "CNPJ": r.CNPJ,
+                "Nome na Receita": info["nome"] if info else "(não encontrado)",
+                "Atividade principal (CNAE)":
+                    f"{info['cnae']} · {info['atividade']}" if info else "",
+                "Categoria": categoria, "Subcategoria": sub_,
+                "cnae": info["cnae"] if info else "", "mei": bool(info and info["mei"]),
+                "Situação": ("✅ classificado" if sugestao else
+                             "atividade sem categoria" if info else "não encontrado na Receita"),
+            })
+        st.session_state["cnpj_auto"] = pd.concat(
+            [st.session_state.get("cnpj_auto", pd.DataFrame()), pd.DataFrame(linhas)],
+            ignore_index=True)
+        if regras_auto:
+            st.session_state["regras_sessao"] = juntar(st.session_state["regras_sessao"],
+                                                       pd.concat(regras_auto))
+            st.session_state["aviso_cnpj"] = (
+                f"🔎 {len(regras_auto)} fornecedor(es) classificado(s) pela atividade na Receita "
+                "(CNPJ). Confira ou mude em Consultar CNPJ.")
+            st.rerun()
+    if st.session_state.get("aviso_cnpj"):
+        st.toast(st.session_state.pop("aviso_cnpj"))
+
     if todos.empty:
         st.warning("Nenhuma transação encontrada. Confira os arquivos e as colunas em "
                    "⚠️ Ver detalhes.")
@@ -1718,82 +1817,82 @@ with corpo:
         return sub if sub in validas else validas[-1]
 
     def secao_cnpj(lembrar):
-        """Consulta pública do CNPJ. lembrar=True (Plus) grava as regras; senão, valem só
-        até fechar o app."""
+        """Os Pix para empresas que o app classificou sozinho pela Receita (CNPJ), para
+        conferir e mudar. lembrar=True (Plus) também grava as regras para as próximas vezes."""
         if st.session_state.get("aviso_regras"):
             st.success(st.session_state.pop("aviso_regras"), icon="✅")
-        conhecidas = set(regras_todas["chave"])
-        pend = saidas_forn[saidas_forn["pendente"]
-                           & ~saidas_forn["chave"].isin(conhecidas)].copy()
-        pend["CNPJ"] = pend["Descrição"].map(extrair_cnpj)
-        pend = (pend.dropna(subset=["CNPJ"]).groupby(["chave", "CNPJ"])
-                .agg(Fornecedor=("Fornecedor", "first"), Total=("Valor", lambda v: -v.sum()))
-                .sort_values("Total", ascending=False).reset_index())
-        if pend.empty:
-            st.caption("Nenhum fornecedor pendente com CNPJ no extrato.")
+        auto = st.session_state.get("cnpj_auto")
+        if auto is None or auto.empty:
+            st.caption("Nenhum Pix para empresa (com CNPJ na descrição) ficou sem categoria.")
             return
-        dica(f"{len(pend)} fornecedor(es) sem categoria têm CNPJ na descrição (Pix para empresas). "
-             "A consulta usa os dados públicos da Receita Federal (BrasilAPI, gratuita).")
-        if st.button(f"🔎 Consultar {len(pend)} CNPJ(s)"):
-            linhas = []
-            barra = st.progress(0.0, text="Consultando a Receita...")
-            for n, r in enumerate(pend.itertuples(), start=1):
-                info = consultar_cnpj_cache(r.CNPJ)
-                sugestao = categoria_do_cnae(info["cnae"]) if info else None
-                linhas.append({
-                    "Aplicar": sugestao is not None, "chave": r.chave, "Fornecedor": r.Fornecedor,
-                    "CNPJ": r.CNPJ, "Nome na Receita": info["nome"] if info else "(não encontrado)",
-                    "Atividade principal (CNAE)": f"{info['cnae']} · {info['atividade']}" if info else "",
-                    "Categoria": sugestao[0] if sugestao else CATEGORIA_PADRAO,
-                    "Subcategoria": (sugestao[1] or SEM_SUB) if sugestao
-                    else SUB_NAO_IDENTIFICADO,
-                    "cnae": info["cnae"] if info else "", "mei": bool(info and info["mei"]),
-                    "Total": formatar_reais(r.Total),
-                })
-                barra.progress(n / len(pend), text=f"Consultando a Receita... {n}/{len(pend)}")
-            barra.empty()
-            st.session_state["sugestoes_cnpj"] = pd.DataFrame(linhas)
-
-        sug = st.session_state.get("sugestoes_cnpj")
-        if sug is None or sug.empty:
-            return
-        dica("Confira as sugestões; ajuste a categoria se precisar e desmarque o que não quiser")
-        sug_edit = st.data_editor(
-            sug, hide_index=True, width="stretch", key="editor_cnpj",
-            column_order=["Aplicar", "Fornecedor", "Nome na Receita",
-                          "Atividade principal (CNAE)", "Categoria", "Subcategoria", "Total"],
-            disabled=["Fornecedor", "Nome na Receita", "Atividade principal (CNAE)", "Total"],
+        totais = -saidas_forn.groupby("chave")["Valor"].sum()
+        tab = auto.assign(Total=auto["chave"].map(totais).fillna(0).map(formatar_reais),
+                          Subcategoria=auto["Subcategoria"].replace("", SEM_SUB))
+        ok = (auto["Situação"] == "✅ classificado").sum()
+        st.markdown(f"**{ok} de {len(auto)} fornecedor(es) classificados automaticamente** pela "
+                    "atividade principal na Receita Federal (dados públicos, BrasilAPI). Mude a "
+                    "categoria se algum estiver errado.")
+        editado = st.data_editor(
+            tab, hide_index=True, width="stretch", key="editor_cnpj",
+            column_order=["Fornecedor", "Nome na Receita", "Categoria", "Subcategoria", "Total",
+                          "Situação", "Atividade principal (CNAE)"],
+            disabled=["Fornecedor", "Nome na Receita", "Atividade principal (CNAE)", "Total",
+                      "Situação"],
             column_config={
                 "Categoria": st.column_config.SelectboxColumn(options=categorias_editaveis()),
                 "Subcategoria": st.column_config.SelectboxColumn(options=todas_subs),
             })
-        marcadas = sug_edit[sug_edit["Aplicar"]]
-        if not st.button(f"✅ Aplicar {len(marcadas)} sugestão(ões)", disabled=marcadas.empty):
-            return
-        novas, pessoais_mei = [], []
-        for _, r in marcadas.iterrows():
-            sub = subcategoria_valida(r["Categoria"], r["Subcategoria"])
-            nome = r["Nome na Receita"] if not r["Nome na Receita"].startswith("(") \
-                else r["Fornecedor"]
-            regra = nova_regra(r["chave"], nome, r["Categoria"], sub, "cnpj", r["CNPJ"], r["cnae"])
-            # MEI tem o nome da pessoa no CNPJ: não vai para o arquivo público
-            (pessoais_mei if r.get("mei") else novas).append(regra)
-        st.session_state.pop("sugestoes_cnpj", None)
-        if lembrar:
-            try:
-                salvar_regras(pd.concat(novas) if novas else regras_vazias(),
-                              pd.concat(pessoais_mei) if pessoais_mei else regras_vazias(),
-                              "CNPJ " + ", ".join(marcadas["Fornecedor"].head(5)))
-            except Exception as e:
-                st.error(f"Não foi possível salvar as regras: {e}")
-                return
-        else:
+        mudou = editado[(editado["Categoria"] != tab["Categoria"])
+                        | (editado["Subcategoria"] != tab["Subcategoria"])]
+
+        def regras_de(linhas):
+            novas, pessoais_mei = [], []
+            for _, r in linhas.iterrows():
+                nome = r["Nome na Receita"] if not r["Nome na Receita"].startswith("(") \
+                    else r["Fornecedor"]
+                regra = nova_regra(r["chave"], nome, r["Categoria"],
+                                   subcategoria_valida(r["Categoria"], r["Subcategoria"]),
+                                   "cnpj", r["CNPJ"], r["cnae"])
+                # MEI tem o nome da pessoa no CNPJ: não vai para o arquivo público
+                (pessoais_mei if r["mei"] else novas).append(regra)
+            return novas, pessoais_mei
+
+        b1, b2, b3 = st.columns(3)
+        if b1.button(f"✅ Aplicar {len(mudou)} alteração(ões)", disabled=mudou.empty):
+            novas, pessoais_mei = regras_de(mudou)
             st.session_state["regras_sessao"] = juntar(st.session_state["regras_sessao"],
                                                        pd.concat(novas + pessoais_mei))
-            st.session_state["versao_regras"] += 1
-            st.session_state["aviso_regras"] = (f"{len(marcadas)} fornecedor(es) "
-                                                "classificado(s) até você fechar o app")
-        st.rerun()
+            atual = auto.copy()
+            atual.loc[mudou.index, "Categoria"] = mudou["Categoria"]
+            atual.loc[mudou.index, "Subcategoria"] = [
+                subcategoria_valida(c, sc) for c, sc in zip(mudou["Categoria"],
+                                                            mudou["Subcategoria"])]
+            atual.loc[mudou.index, "Situação"] = "✏️ alterado por você"
+            st.session_state["cnpj_auto"] = atual
+            st.session_state["aviso_regras"] = (f"{len(mudou)} fornecedor(es) alterado(s) até "
+                                                "você fechar o app")
+            st.rerun()
+        if lembrar:
+            para_lembrar = editado[(editado["Situação"] != "atividade sem categoria")
+                                   & (editado["Situação"] != "não encontrado na Receita")
+                                   | editado.index.isin(mudou.index)]
+            if b2.button(f"💾 Lembrar {len(para_lembrar)} nas próximas vezes",
+                         disabled=para_lembrar.empty):
+                novas, pessoais_mei = regras_de(para_lembrar)
+                try:
+                    salvar_regras(pd.concat(novas) if novas else regras_vazias(),
+                                  pd.concat(pessoais_mei) if pessoais_mei else regras_vazias(),
+                                  "CNPJ " + ", ".join(para_lembrar["Fornecedor"].head(5)))
+                except Exception as e:
+                    st.error(f"Não foi possível salvar as regras: {e}")
+                    return
+                st.rerun()
+        falhas = auto[auto["Situação"] == "não encontrado na Receita"]
+        if not falhas.empty and b3.button(f"🔄 Consultar de novo {len(falhas)} não "
+                                          "encontrado(s)"):
+            st.session_state["cnpj_tentados"] -= set(falhas["CNPJ"])
+            st.session_state["cnpj_auto"] = auto.drop(falhas.index).reset_index(drop=True)
+            st.rerun()
 
     if not PLUS:
         if pagina == "❓ Ajuda":
@@ -1801,9 +1900,10 @@ with corpo:
 
         if pagina == "🔎 Consultar CNPJ":
             st.subheader("Consultar CNPJ na Receita")
-            st.markdown("Pix feitos a empresas trazem o CNPJ na descrição. O app consulta a "
-                        "**atividade principal** da empresa nos dados públicos da Receita "
-                        "Federal e sugere a categoria — você confere e aplica.")
+            st.markdown("Pix feitos a empresas trazem o CNPJ na descrição. Assim que você envia "
+                        "os extratos, o app consulta a **atividade principal** da empresa nos "
+                        "dados públicos da Receita Federal e já classifica. Confira abaixo e "
+                        "mude o que quiser.")
             secao_cnpj(lembrar=False)
             st.caption("🔒 Nada é guardado: as classificações valem até você fechar o app. "
                        "Para corrigir qualquer fornecedor e o app lembrar nas próximas vezes, "

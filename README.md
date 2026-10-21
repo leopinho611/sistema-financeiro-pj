@@ -17,7 +17,7 @@ Um aplicativo web que automatiza a categorização de extratos bancários e gera
 ✅ Tema escuro (padrão) ou claro - Azul-marinho, ciano, dourado e branco-osso; troque em ⋮ no canto superior direito  
 ✅ Exportação - CSV (padrão Excel brasileiro) ou XLSX com abas de resumo  
 ✅ Filtros - Contas e categorias em botões (marcar e desmarcar), período, e busca na descrição  
-✅ Consultar CNPJ - Pix para empresas: consulta a atividade na Receita (dados públicos) e sugere a categoria pelo CNAE; vale até fechar o app
+✅ Consultar CNPJ - Pix para empresas: ao enviar os extratos, o app consulta a atividade na Receita (dados públicos) e já classifica pelo CNAE; dá para conferir e mudar (vale até fechar o app; no Plus, pode lembrar)  
 
 ⭐ Área Plus (com código de acesso)
 ⭐ Relatório em PDF - 4 páginas em linguagem simples: nota geral, destaques, mês a mês e aplicações, para onde foi o dinheiro (categoria → subcategoria → maiores gastos), o que já está comprometido, pontos de atenção, prévia do IR, próximos passos e o que falta enviar para o relatório ficar mais completo. Na área aberta há um exemplo com dados fictícios para baixar  
