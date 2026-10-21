@@ -825,6 +825,11 @@ def salvar_regras(novas_comp, novas_pess, descricao):
 # costumam chegar sem extensão (ou com outra), e o Streamlit recusaria a página inteira.
 # Cada arquivo é reconhecido pelo conteúdo, e o que não for extrato aparece no aviso amarelo
 TIPOS_EXTRATO = None
+DICA_DRIVE = ("**No celular, baixe o arquivo antes de enviar.** Arquivos escolhidos direto do "
+              "Google Drive costumam falhar (aparece um \"!\" vermelho). No Drive, abra o arquivo "
+              "→ **⋮ → Fazer download** e, aqui, escolha-o pela pasta **Downloads**.")
+_navegador = (st.context.headers.get("User-Agent") or "").lower()
+NO_CELULAR = any(x in _navegador for x in ("android", "iphone", "ipad", "mobile"))
 # Arquivos enviados pela área grande da tela inicial: guardados na sessão (só na memória)
 # porque aquela área some depois do envio
 st.session_state.setdefault("arquivos_principal", [])
@@ -971,6 +976,8 @@ def secao_ajuda():
          "procure a opção de **exportar, compartilhar ou baixar**. O app lê CSV, Excel e OFX de "
          "qualquer banco e, em PDF, os extratos do Nubank, Sicredi e XP e a fatura do cartão BB. "
          "Quanto mais meses, melhores as análises."),
+        ("No celular, o arquivo fica com um \"!\" vermelho e não envia.",
+         DICA_DRIVE + " O mesmo vale para OneDrive, Dropbox e outros apps de nuvem."),
         ("Meu arquivo não foi reconhecido. E agora?",
          "Abra **📂 Arquivos lidos** para ver o motivo. Se o banco oferecer, tente outro formato "
          "(OFX ou CSV costumam funcionar melhor que PDF). Se não der certo, fale com a gente "
@@ -1189,6 +1196,10 @@ with corpo:
         if enviados:
             st.session_state["arquivos_principal"] = list(enviados)
             st.rerun()
+        # No celular, arquivo escolhido direto do Google Drive (sem estar baixado) falha no envio,
+        # antes de chegar ao app: o "!" vermelho no arquivo
+        if NO_CELULAR:
+            st.info(DICA_DRIVE, icon="📱")
         st.markdown("""
         ## 🚀 Como usar
         1. No app ou no site do banco, baixe o **extrato** da conta (CSV, Excel ou OFX) ou
