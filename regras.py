@@ -129,7 +129,7 @@ class RepositorioRegras:
         return "local"
 
 
-def consultar_cnpj(cnpj):
+def consultar_cnpj(cnpj, timeout=TIMEOUT):
     """Dados públicos do CNPJ na Receita Federal (via BrasilAPI), ou None.
 
     Retorna {"nome": nome fantasia ou razão social, "cnae": código, "atividade": descrição,
@@ -138,7 +138,7 @@ def consultar_cnpj(cnpj):
     req = urllib.request.Request(URL_BRASILAPI.format(cnpj=cnpj),
                                  headers={"User-Agent": "sistema-financeiro-pj"})
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             dados = json.loads(resp.read().decode())
     except Exception:
         return None

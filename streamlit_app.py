@@ -12,6 +12,7 @@ import pickle
 import importlib
 import secrets
 import sys
+import zipfile
 
 import altair as alt
 import numpy as np
@@ -753,8 +754,8 @@ def impressao(*partes):
 
 
 @st.cache_data(ttl=7 * 24 * 3600, show_spinner=False)
-def _cnpj_guardado(cnpj):
-    info = consultar_cnpj(cnpj)
+def _cnpj_guardado(cnpj, tempo=10):
+    info = consultar_cnpj(cnpj, tempo)
     if info is None:
         raise LookupError(cnpj)   # erro não fica no cache: tenta de novo da próxima vez
     return info
@@ -768,16 +769,19 @@ def consultar_cnpj_cache(cnpj):
         return None
 
 
-MAX_CNPJ_POR_VEZ = 60
+MAX_CNPJ_POR_VEZ = 30
+TEMPO_CNPJ = 5   # segundos por consulta automática: a Receita lenta não trava a tela
 
 
 def consultar_cnpj_cache_sem_contexto(cnpj):
     """Para as consultas em paralelo (fora da execução da página): usa a mesma memória de
     uma semana quando dá, senão consulta direto."""
     try:
-        return consultar_cnpj_cache(cnpj)
+        return _cnpj_guardado(cnpj, TEMPO_CNPJ)
+    except LookupError:
+        return None
     except Exception:  # noqa: BLE001 - sem o contexto do Streamlit, consulta sem memória
-        return consultar_cnpj(cnpj)
+        return consultar_cnpj(cnpj, TEMPO_CNPJ)
 
 
 def cnpjs_pendentes(t, regras):
@@ -817,7 +821,10 @@ def salvar_regras(novas_comp, novas_pess, descricao):
 # ============================================================================
 # SIDEBAR - UPLOAD
 # ============================================================================
-TIPOS_EXTRATO = ["csv", "xlsx", "xls", "excel", "pdf", "ofx", "zip"]
+# Sem limitar o tipo no envio: no celular, arquivos do Google Drive e de outros apps
+# costumam chegar sem extensão (ou com outra), e o Streamlit recusaria a página inteira.
+# Cada arquivo é reconhecido pelo conteúdo, e o que não for extrato aparece no aviso amarelo
+TIPOS_EXTRATO = None
 # Arquivos enviados pela área grande da tela inicial: guardados na sessão (só na memória)
 # porque aquela área some depois do envio
 st.session_state.setdefault("arquivos_principal", [])
@@ -1221,9 +1228,22 @@ with corpo:
             return self._dados
 
 
+    def eh_zip(nome, conteudo):
+        """.zip pelo nome ou, sem extensão, pelo conteúdo (o Excel .xlsx também é zip por
+        dentro, mas tem o [Content_Types].xml)."""
+        if nome.lower().endswith(".zip"):
+            return True
+        if "." in nome.rsplit("/", 1)[-1] or conteudo[:4] != b"PK\x03\x04":
+            return False
+        try:
+            with zipfile.ZipFile(io.BytesIO(conteudo)) as z:
+                return "[Content_Types].xml" not in z.namelist()
+        except zipfile.BadZipFile:
+            return False
+
     expandidos = []
     for arquivo in arquivos:
-        if arquivo.name.lower().endswith(".zip"):
+        if eh_zip(arquivo.name, arquivo.getvalue()):
             try:
                 internos = expandir_zip(arquivo.getvalue())
                 expandidos += [ArquivoEmMemoria(f"{n}", d) for n, d in internos]
