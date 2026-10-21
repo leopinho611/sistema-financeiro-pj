@@ -1671,10 +1671,18 @@ with corpo:
                          "Quanto das entradas veio de quem mais pagou. Quanto maior, mais você "
                          "depende de uma fonte só."),
                     ])
-                    if varios_meses:
-                        with st.container(border=True):
+                    with st.container(border=True):
+                        if varios_meses:
                             titulo_painel("Entradas", "por tipo e total, mês a mês")
                             linhas_por_mes(df_e, "Tipo")
+                        else:
+                            # Período de um mês só: não há linha mês a mês para desenhar
+                            titulo_painel("Entradas",
+                                          f"por tipo em {rotulo_mes(df['Mês'].iat[0])}")
+                            st.altair_chart(grafico_categorias(tipos_sel, "Entrada"),
+                                            width="stretch")
+                            dica("Escolha um período de 2 meses ou mais para ver a evolução "
+                                 "mês a mês")
                 with dir_:
                     painel_ciano("De onde vem", "Tipos escolhidos", tipos_sel, "Entrada")
                 with st.container(border=True):
@@ -1714,10 +1722,17 @@ with corpo:
                          "Assinaturas, mensalidades e contas mensais ainda ativas, nas "
                          "categorias escolhidas."),
                     ])
-                    if varios_meses:
-                        with st.container(border=True):
+                    with st.container(border=True):
+                        if varios_meses:
                             titulo_painel("Saídas", "por categoria, mês a mês")
                             linhas_por_mes(df_s, "Categoria", com_total=False)
+                        else:
+                            # Período de um mês só: não há linha mês a mês para desenhar
+                            titulo_painel("Saídas",
+                                          f"por categoria em {rotulo_mes(df['Mês'].iat[0])}")
+                            st.altair_chart(grafico_categorias(cats_sel), width="stretch")
+                            dica("Escolha um período de 2 meses ou mais para ver a evolução "
+                                 "mês a mês")
                 with dir_:
                     painel_ciano("Para onde vai", "Categorias escolhidas", cats_sel, "Saída")
                 with st.container(border=True):
