@@ -169,7 +169,12 @@ st.markdown(f"""
   .st-key-faixa_ok [data-testid="stMarkdownContainer"] {{ margin-bottom: 0; }}
   .st-key-faixa_ok [data-testid="stPopover"] {{ display: flex; justify-content: flex-end; }}
   /* Cartões de números do Painel */
-  .kpis {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); gap: .8rem;
+  /* 4 cartões numa linha; sem espaço, 2 e 2 (nunca 3 + 1) */
+  .kpis-caixa {{ container-type: inline-size; }}
+  @container (max-width: 680px) {{
+    .kpis.kpis {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+  }}
+  .kpis {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .8rem;
            margin-bottom: 1rem; }}
   .kpi {{ background: {CARTAO_FUNDO}; border-radius: 10px; padding: .75rem .9rem;
           border: 1px solid color-mix(in srgb, {DESTAQUE} 40%, transparent); min-width: 0;
@@ -968,8 +973,8 @@ def secao_ajuda():
          "fechar. O que fica guardado são as classificações que você salvar (nome da empresa → "
          "categoria), sem valores nem datas."),
         ("Uma categoria está errada.",
-         "Na área aberta, a página **🔎 Consultar CNPJ** mostra os Pix para empresas que o app "
-         "classificou pela Receita, para conferir e mudar. No Plus, a "
+         "Em **📋 Transações** ficam os Pix para empresas que o app classificou pela Receita "
+         "(CNPJ), para conferir e mudar. No Plus, a "
          "página **⭐ Classificar** corrige qualquer fornecedor e o app lembra nas próximas vezes."),
         ("Como funciona o código Plus?",
          "Depois do pagamento, você recebe um código pelo WhatsApp ou e-mail. No menu lateral, "
@@ -1386,7 +1391,7 @@ with corpo:
 
     # Pix para empresas sem categoria: o CNPJ da descrição é consultado na Receita (dados
     # públicos) e a categoria vem da atividade principal (CNAE), sem precisar pedir. Vale até
-    # fechar o app; em 🔎 Consultar CNPJ dá para conferir e mudar
+    # fechar o app; em 📋 Transações dá para conferir e mudar
     tentados = st.session_state.setdefault("cnpj_tentados", set())
     novos = cnpjs_pendentes(todos, regras_todas)
     novos = novos[~novos["CNPJ"].isin(tentados)].head(MAX_CNPJ_POR_VEZ)
@@ -1424,7 +1429,7 @@ with corpo:
                                                        pd.concat(regras_auto))
             st.session_state["aviso_cnpj"] = (
                 f"🔎 {len(regras_auto)} fornecedor(es) classificado(s) pela atividade na Receita "
-                "(CNPJ). Confira ou mude em Consultar CNPJ.")
+                "(CNPJ). Confira ou mude em 📋 Transações.")
             st.rerun()
     if st.session_state.get("aviso_cnpj"):
         st.toast(st.session_state.pop("aviso_cnpj"))
@@ -1440,7 +1445,7 @@ with corpo:
     PAGINAS = [PAINEL, "📅 Mês a mês", "📋 Transações", "📥 Download"]
     PAGINAS += (["⭐ Relatório", "⭐ Imposto de Renda", "⭐ Fixos e parcelas",
                  "⭐ Saúde financeira", "⭐ Classificar"] if PLUS
-                else ["🔎 Consultar CNPJ", "⭐ Área Plus"]) + ["❓ Ajuda"]
+                else ["⭐ Área Plus"]) + ["❓ Ajuda"]
     with menu_lateral:
         st.markdown('<p class="secao">🧭 Navegação</p>', unsafe_allow_html=True)
         with st.container(key="menu"):
@@ -1558,13 +1563,13 @@ with corpo:
 
     def cartoes_kpi(itens):
         """Os 4 cartões do alto: (ícone, título, valor, nota, classe do valor, dica)."""
-        html = ['<div class="kpis">']
+        html = ['<div class="kpis-caixa"><div class="kpis">']
         for icone, titulo, valor, nota, classe, ajuda in itens:
             html.append(f'<div class="kpi" title="{escape(ajuda)}"><div class="rot">'
                         f'<span class="ico">{icone}</span>{escape(titulo)}</div>'
                         f'<div class="val {classe}">{escape(valor)}</div>'
                         f'<div class="nota">{escape(nota)}</div></div>')
-        st.markdown("".join(html + ["</div>"]), unsafe_allow_html=True)
+        st.markdown("".join(html + ["</div></div>"]), unsafe_allow_html=True)
 
     def por_mes(n):
         return f"{n} {'mês' if n == 1 else 'meses'}"
@@ -1573,7 +1578,7 @@ with corpo:
         st.markdown(f'<div class="titulo-painel">{titulo}<span class="tag">{tag}</span></div>',
                     unsafe_allow_html=True)
 
-    def painel_ciano(titulo, subtitulo, tabela, tipo, nota, n=8):
+    def painel_ciano(titulo, subtitulo, tabela, tipo, n=8):
         """Painel em degradê ciano, à direita, com o ranking."""
         with st.container(key="painel_ciano"):
             st.markdown(f"### {titulo}")
@@ -1582,7 +1587,6 @@ with corpo:
                 st.caption("Nada no período.")
             else:
                 st.markdown(ranking_html(tabela, tipo, n=n), unsafe_allow_html=True)
-            dica(nota)
 
     def linhas_por_mes(dados, rotulo, com_total=True):
         """Uma linha por categoria escolhida (as 7 maiores; o resto em "Outros") e, se
@@ -1625,9 +1629,7 @@ with corpo:
                     st.markdown(ranking_html(tipos_entrada, "Entrada"), unsafe_allow_html=True)
                 dica("Os detalhes, com quem pagou, estão em Entradas (logo acima)")
         with dir_:
-            painel_ciano("Para onde vai", "Maiores categorias de gasto", cats, "Saída",
-                         "Os detalhes, com subcategorias e fornecedores, estão em Saídas "
-                         "(logo acima)")
+            painel_ciano("Para onde vai", "Maiores categorias de gasto", cats, "Saída")
 
         if not internas.empty:
             st.subheader("Movimentações internas")
@@ -1674,8 +1676,7 @@ with corpo:
                             titulo_painel("Entradas", "por tipo e total, mês a mês")
                             linhas_por_mes(df_e, "Tipo")
                 with dir_:
-                    painel_ciano("De onde vem", "Tipos escolhidos", tipos_sel, "Entrada",
-                                 "Clique num tipo, logo abaixo, para ver quem pagou")
+                    painel_ciano("De onde vem", "Tipos escolhidos", tipos_sel, "Entrada")
                 with st.container(border=True):
                     titulo_painel("Quem pagou", "por tipo de entrada")
                     dica("Clique num tipo para ver quem mais pagou · nas linhas abertas, "
@@ -1718,8 +1719,7 @@ with corpo:
                             titulo_painel("Saídas", "por categoria, mês a mês")
                             linhas_por_mes(df_s, "Categoria", com_total=False)
                 with dir_:
-                    painel_ciano("Para onde vai", "Categorias escolhidas", cats_sel, "Saída",
-                                 "Clique numa categoria, logo abaixo, para abrir os fornecedores")
+                    painel_ciano("Para onde vai", "Categorias escolhidas", cats_sel, "Saída")
                 with st.container(border=True):
                     titulo_painel("Para quem foi", "categoria → subcategoria → fornecedor")
                     dica("Clique numa categoria para abrir as subcategorias e os maiores "
@@ -1734,7 +1734,8 @@ with corpo:
                 if pct_sem_id > 20:
                     st.caption(f"ℹ️ {pct_sem_id:.0f}% das saídas não foram identificadas. "
                                + ("Classifique em ⭐ Classificar." if PLUS else
-                                  "Veja 🔎 Consultar CNPJ, no menu ao lado."))
+                                  "Pix para empresas são classificados pela Receita; "
+                                  "confira em 📋 Transações."))
 
     # ----------------------------------------------------------------------------
     if pagina == "📅 Mês a mês":
@@ -1754,29 +1755,6 @@ with corpo:
             por_mes = por_mes.loc[por_mes.sum(axis=1).sort_values(ascending=False).index]
             por_mes.columns = [rotulo_mes(m) for m in por_mes.columns]
             st.dataframe(por_mes.map(formatar_reais), width="stretch")
-
-    # ----------------------------------------------------------------------------
-    if pagina == "📋 Transações":
-        f1, f2, f3 = st.columns([2, 2, 1])
-        filtro_cat = f1.multiselect("Categoria", sorted(df["Categoria"].unique()))
-        busca = f2.text_input("Buscar na descrição")
-        ver_internas = f3.toggle("Mostrar internas", value=False)
-        visao = df if ver_internas else df[df["Tipo"] != "Interna"]
-        if filtro_cat:
-            visao = visao[visao["Categoria"].isin(filtro_cat)]
-        if busca:
-            visao = visao[visao["Descrição"].str.contains(busca, case=False, regex=False)]
-        st.caption(f"{len(visao)} transações — total {formatar_reais(visao['Valor'].sum())}")
-        dica("Clique no título de uma coluna para classificar · use os filtros acima para refinar")
-        st.dataframe(
-            visao[["Data", "Conta", "Fornecedor", "Descrição", "Valor", "Tipo", "Categoria",
-                   "Subcategoria"]],
-            hide_index=True, width="stretch",
-            column_config={
-                "Data": st.column_config.DateColumn(format="DD/MM/YYYY"),
-                "Valor": st.column_config.NumberColumn(format="R$ %.2f"),
-            },
-        )
 
     # ----------------------------------------------------------------------------
     if pagina == "📥 Download":
@@ -1894,20 +1872,46 @@ with corpo:
             st.session_state["cnpj_auto"] = auto.drop(falhas.index).reset_index(drop=True)
             st.rerun()
 
+    # ----------------------------------------------------------------------------
+    if pagina == "📋 Transações":
+        # Revisão dos Pix para empresas que o app classificou sozinho pela Receita (CNPJ)
+        auto = st.session_state.get("cnpj_auto")
+        if auto is not None and not auto.empty:
+            with st.expander(f"🔎 Pix para empresas classificados pela Receita ({len(auto)})"):
+                st.markdown("Pix feitos a empresas trazem o CNPJ na descrição. Assim que você "
+                            "envia os extratos, o app consulta a **atividade principal** da "
+                            "empresa nos dados públicos da Receita Federal e já classifica. "
+                            "Confira e mude o que quiser.")
+                secao_cnpj(lembrar=PLUS)
+                if not PLUS:
+                    st.caption("🔒 Nada é guardado: as classificações valem até você fechar o "
+                               "app. Para o app lembrar nas próximas vezes, use a versão "
+                               "⭐ Plus.")
+        f1, f2, f3 = st.columns([2, 2, 1])
+        filtro_cat = f1.multiselect("Categoria", sorted(df["Categoria"].unique()),
+                                    placeholder="Todas")
+        busca = f2.text_input("Buscar na descrição")
+        ver_internas = f3.toggle("Mostrar internas", value=False)
+        visao = df if ver_internas else df[df["Tipo"] != "Interna"]
+        if filtro_cat:
+            visao = visao[visao["Categoria"].isin(filtro_cat)]
+        if busca:
+            visao = visao[visao["Descrição"].str.contains(busca, case=False, regex=False)]
+        st.caption(f"{len(visao)} transações — total {formatar_reais(visao['Valor'].sum())}")
+        dica("Clique no título de uma coluna para classificar · use os filtros acima para refinar")
+        st.dataframe(
+            visao[["Data", "Conta", "Fornecedor", "Descrição", "Valor", "Tipo", "Categoria",
+                   "Subcategoria"]],
+            hide_index=True, width="stretch",
+            column_config={
+                "Data": st.column_config.DateColumn(format="DD/MM/YYYY"),
+                "Valor": st.column_config.NumberColumn(format="R$ %.2f"),
+            },
+        )
+
     if not PLUS:
         if pagina == "❓ Ajuda":
             secao_ajuda()
-
-        if pagina == "🔎 Consultar CNPJ":
-            st.subheader("Consultar CNPJ na Receita")
-            st.markdown("Pix feitos a empresas trazem o CNPJ na descrição. Assim que você envia "
-                        "os extratos, o app consulta a **atividade principal** da empresa nos "
-                        "dados públicos da Receita Federal e já classifica. Confira abaixo e "
-                        "mude o que quiser.")
-            secao_cnpj(lembrar=False)
-            st.caption("🔒 Nada é guardado: as classificações valem até você fechar o app. "
-                       "Para corrigir qualquer fornecedor e o app lembrar nas próximas vezes, "
-                       "use a versão ⭐ Plus.")
 
         if pagina == "⭐ Área Plus":
             st.markdown('<div class="vitrine"><h3>⭐ Contas em Dia Plus</h3>'
@@ -2202,8 +2206,8 @@ with corpo:
         st.caption("🔒 Empresas (cartão, boleto, débito ou CNPJ) vão para as regras compartilhadas. "
                    "Pix para pessoas fica só nas suas regras pessoais, para não expor nomes.")
 
-        st.subheader("Consultar CNPJ na Receita")
-        secao_cnpj(lembrar=True)
+        st.caption("🔎 Os Pix para empresas que o app classificou pela Receita (CNPJ) estão "
+                   "em 📋 Transações, para conferir e lembrar.")
 
         # ---- Regras salvas
         pessoais = st.session_state["regras_pessoais"]
