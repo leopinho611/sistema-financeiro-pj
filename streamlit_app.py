@@ -1,4 +1,5 @@
 import io
+import json
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 from html import escape
@@ -108,6 +109,11 @@ st.markdown(f"""
                          letter-spacing: .04em; }}
   .cabecalho .slogan {{ text-align: right; color: {DOURADO}; font-style: italic;
                         font-size: 1rem; margin: 0; letter-spacing: .02em; }}
+  .cabecalho .lado {{ display: flex; flex-direction: column; align-items: flex-end; }}
+  .cabecalho .compartilhar {{ margin-bottom: .35rem; padding: .3rem .85rem; border-radius: 999px;
+      border: 1px solid {DOURADO}; background: transparent; color: {DOURADO}; font-weight: 600;
+      font-size: .85rem; cursor: pointer; font-family: inherit; }}
+  .cabecalho .compartilhar:hover {{ background: color-mix(in srgb, {DOURADO} 15%, transparent); }}
   [data-testid="stMetric"] {{ background: {CARTAO_FUNDO}; border-radius: 10px;
                               border: 1px solid color-mix(in srgb, {DESTAQUE} 40%, transparent);
                               padding: .75rem 1rem; height: 100%; }}
@@ -370,12 +376,42 @@ st.markdown(f"""
     .kpis {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
   }}
 </style>
+""", unsafe_allow_html=True)
+
+# Cabeçalho com o botão de compartilhar: no celular abre a janela de compartilhar do aparelho
+# (WhatsApp, e-mail...); no computador, copia o link
+ENDERECO_APP = "https://sistema-financeiro-pj-cfzvrv3ryghyyfppncz97u.streamlit.app/"
+TEXTO_COMPARTILHAR = ("Contas em Dia: envie o extrato do banco e veja para onde vai o seu "
+                      "dinheiro, em segundos. Grátis e sem guardar seus dados.")
+st.html(f"""
 <div class="cabecalho">
   <h1>Contas em Dia</h1>
-  <div><p class="sistema">Sistema de Controle Financeiro</p>
-  <p class="slogan">Seus gastos na palma da mão</p></div>
+  <div class="lado">
+    <button id="compartilhar" class="compartilhar" type="button">↗ Compartilhar</button>
+    <p class="sistema">Sistema de Controle Financeiro</p>
+    <p class="slogan">Seus gastos na palma da mão</p>
+  </div>
 </div>
-""", unsafe_allow_html=True)
+<script>
+(() => {{
+  const b = document.getElementById("compartilhar");
+  if (!b || b.dataset.pronto) return;
+  b.dataset.pronto = "1";
+  const dados = {{title: "Contas em Dia", text: {json.dumps(TEXTO_COMPARTILHAR)}, url: {json.dumps(ENDERECO_APP)}}};
+  b.addEventListener("click", async () => {{
+    try {{
+      if (navigator.share) {{ await navigator.share(dados); return; }}
+      await navigator.clipboard.writeText(dados.url);
+      b.textContent = "✓ Link copiado";
+    }} catch (e) {{
+      if (e && e.name === "AbortError") return;   // a pessoa fechou a janela
+      window.prompt("Copie o link:", dados.url);
+    }}
+    setTimeout(() => {{ b.textContent = "↗ Compartilhar"; }}, 2500);
+  }});
+}})();
+</script>
+""", unsafe_allow_javascript=True)
 
 
 def dica(texto):
