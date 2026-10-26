@@ -15,6 +15,7 @@ from leitores_pdf import (
     ler_extrato_santander,
     ler_fatura_bradesco,
     ler_fatura_itau,
+    ler_fatura_sicoob,
     ler_pdf_de_banco,
     eh_resumo_invest_facil,
     ler_resumo_invest_facil,
@@ -243,3 +244,54 @@ total                        1.558,53                   5.365,62                
     aplic = t[t["Conta"] == "Itaú Aplic Aut Mais Ag 1111 Cc 22222-2"]
     assert list(aplic["Descrição"]) == ["Aplicação", "Rendimento bruto", "IOF retido", "Resgate"]
     assert list(aplic["Valor"]) == [1558.53, 0.17, -0.13, -5365.66]
+
+
+# Fatura do cartão Sicoob (Sicoobnet → Cartões → Detalhamento), com dados fictícios. As
+# colunas são fixas: estabelecimento (22), parcela (8), cidade e valor
+FATURA_SICOOB = """SICOOB
+17/08/2026 EXTRATO DE FATURA DE CARTÃO DE CRÉDITO 11:47:48
+EMPRESA EXEMPLO LTDA
+Fatura de AGOSTO Vencimento: 19/08/2026
+Movimentos
+-  SALDO ANTERIOR 1.000,00
+20/07  PAGAMENTO-BOLETO BANCARIO -1.000,00
+09/07  ANUIDADE MASTERCARD  (1234) 01/12 29,90
+09/07  DESC ANUIDADE POR USO MAS -29,90
+10/07  IOF OPERACAO EXTERIOR 3,50
+ GASTOS DE FULANO EXEMPLO     (1234) 
+05/11  LOJA EXEMPLO          10/10   NATAL 108,04
+09/07  PADARIA EXEMPLO               NATAL 14,00
+27/07  EBN         *HOSTING          CURITIBA 839,88
+10/07  OPENAI *CHATGPT SUBS          SAN FRANCISCO 
+ R$ 99,90    U$ 19,53    V.DOL 5,1088 99,90
+11/07  FACEBK* AAAAA11111            ITAIM BIBI 57,30
+ TOTAL 1.119,12
+Demostrativo de pagamento em R$
+Total da fatura 1.122,62
+"""
+
+
+def test_fatura_sicoob():
+    assert ler_pdf_de_banco(FATURA_SICOOB, b"") is not None
+    t = ler_fatura_sicoob(FATURA_SICOOB)
+    assert t["Conta"].iat[0] == "Sicoob Cartão final 1234"
+    assert not t["Descrição"].str.contains("PAGAMENTO").any()   # já está na conta corrente
+    assert round(-t["Valor"].sum(), 2) == 1122.62               # o total da fatura
+    por = t.set_index("Descrição")
+    # Internacional: o valor em reais vem na linha de baixo
+    assert por.loc["OPENAI *CHATGPT SUBS", "Valor"] == -99.90
+    # Estabelecimento com espaços no meio fica inteiro, sem a cidade
+    assert por.loc["EBN *HOSTING", "Valor"] == -839.88
+    # Parcela entra no vencimento; a data impressa é a da compra
+    assert por.loc["LOJA EXEMPLO 10/10", "Data"] == pd.Timestamp("2026-08-19")
+    assert por.loc["PADARIA EXEMPLO", "Data"] == pd.Timestamp("2026-07-09")
+    assert por.loc["ANUIDADE MASTERCARD 01/12", "Valor"] == -29.90
+    assert por.loc["DESC ANUIDADE POR USO MAS", "Valor"] == 29.90       # estorno
+    assert por.loc["FACEBK* AAAAA11111", "Fornecedor"] == "Facebook Anúncios"
+
+
+def test_boleto_da_fatura_sicoob_avisa_que_falta_o_detalhamento():
+    boleto = ("EXTRATO DA FATURA DO CARTÃO DE CRÉDITO\nResumo da fatura\nTOTAL DA FATURA (R$)\n"
+              "Site: www.sicoobcard.com.br\nFicha de compensação\n")
+    with pytest.raises(SemLancamentos, match="Detalhamento"):
+        ler_pdf_de_banco(boleto, b"")

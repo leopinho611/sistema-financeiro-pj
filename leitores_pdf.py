@@ -310,6 +310,66 @@ def ler_fatura_itau(texto):
 
 
 # ============================================================================
+# SICOOB - fatura do cartão (Sicoobnet: Cartões → Detalhamento, "Extrato de fatura")
+# ============================================================================
+# Colunas fixas depois de "dd/mm  ": estabelecimento (22 letras), parcela (8) e cidade; o valor
+# fica no fim. Compra internacional ocupa 2 linhas: a de baixo traz o valor em reais no fim.
+_LINHA_SICOOB = re.compile(r"^(\d{2})/(\d{2})  (.*)$")
+_FIM_VALOR = re.compile(rf"\s*({VALOR})\s*$")
+
+
+def eh_fatura_sicoob(texto):
+    return "EXTRATO DE FATURA DE CARTÃO DE CRÉDITO" in texto and "SICOOB" in texto.upper() \
+        and "Movimentos" in texto
+
+
+def eh_boleto_fatura_sicoob(texto):
+    return "EXTRATO DA FATURA DO CARTÃO DE CRÉDITO" in texto and "Ficha de compensação" in texto \
+        and "sicoob" in texto.lower()
+
+
+def _compra_sicoob(corpo):
+    """(descrição, valor ou None) de uma linha de compra, sem a cidade."""
+    valor = _FIM_VALOR.search(corpo)
+    if re.match(r"^.{22}(\d{2}/\d{2}|\s{5})", corpo):
+        nome, parcela = corpo[:22].strip(), corpo[22:30].strip()
+    else:  # linha curta (IOF, anuidade): sem cidade
+        resto = corpo[:valor.start()] if valor else corpo
+        resto = re.sub(r"\(\d{4}\)", "", resto)
+        p = re.search(r"\s(\d{2}/\d{2})\s*$", resto)
+        nome, parcela = (resto[:p.start()] if p else resto).strip(), p.group(1) if p else ""
+    descricao = _limpa(f"{nome} {parcela}" if re.fullmatch(r"\d{2}/\d{2}", parcela) else nome)
+    return descricao, converter_valor(valor.group(1)) if valor else None
+
+
+def ler_fatura_sicoob(texto):
+    m = re.search(r"Vencimento:\s*(\d{2}/\d{2}/\d{4})", texto)
+    if not m:
+        raise ValueError("fatura sem data de vencimento.")
+    venc = pd.to_datetime(m.group(1), format="%d/%m/%Y")
+    final = re.search(r"\((\d{4})\)", texto)
+    conta = f"Sicoob Cartão final {final.group(1)}" if final else "Sicoob Cartão"
+    inicio = texto.find("Movimentos")
+    itens, pendente = [], None
+    for linha in texto[inicio:].splitlines():
+        if re.match(r"^\s*TOTAL\b", linha):
+            break
+        m = _LINHA_SICOOB.match(linha)
+        if m:
+            dia, mes, corpo = m.groups()
+            descricao, valor = _compra_sicoob(corpo)
+            if valor is None:
+                pendente = (dia, mes, descricao)   # internacional: o valor vem na linha de baixo
+            else:
+                itens.append((dia, mes, descricao, valor))
+                pendente = None
+        elif pendente and _FIM_VALOR.search(linha):
+            itens.append((*pendente, converter_valor(_FIM_VALOR.search(linha).group(1))))
+            pendente = None
+    return _tabela(_compras_do_cartao(itens, venc), conta, cartao=True)
+
+
+# ============================================================================
 # SANTANDER - extrato consolidado inteligente (PJ)
 # ============================================================================
 _LINHA_SANTANDER = re.compile(rf"^\s*(?:(\d{{2}})/(\d{{2}})\s+)?(.+?)\s+-?\s*({VALOR})"
@@ -420,6 +480,9 @@ def ler_resumo_invest_facil(texto):
 
 def sem_lancamentos(texto):
     """(conta, motivo) quando o PDF é reconhecido mas não tem o que importar."""
+    if eh_boleto_fatura_sicoob(texto):
+        return "Sicoob Cartão", ("é o boleto da fatura (só o total e o código de barras); envie "
+                                 "a fatura detalhada: Sicoobnet → Cartões → Detalhamento")
     if re.search(r"Invest Fácil|INVEST FAC", texto) and "Valor Principal" in texto \
             and "Lançamento" not in texto and "Total Aplicado" not in texto:
         return "Bradesco Invest Fácil", ("só saldos mensais da aplicação; as aplicações, resgates "
@@ -436,6 +499,7 @@ LEITORES = [
     (eh_fatura_bradesco, ler_fatura_bradesco, False),
     (eh_extrato_itau, ler_extrato_itau, True),
     (eh_fatura_itau, ler_fatura_itau, False),
+    (eh_fatura_sicoob, ler_fatura_sicoob, False),
     (eh_extrato_santander, ler_extrato_santander, True),
 ]
 

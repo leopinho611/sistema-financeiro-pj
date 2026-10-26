@@ -781,6 +781,8 @@ APELIDOS_FORNECEDOR = [
     ("leroy merlin", "Leroy Merlin"), ("lojas americanas", "Lojas Americanas"),
     ("ifood", "iFood"), ("uber", "Uber"), ("99 ride", "99"), ("netflix", "Netflix"),
     ("spotify", "Spotify"), ("pague menos", "Pague Menos"),
+    # Anúncios do Facebook/Instagram: cada cobrança vem com um código ("FACEBK *K6R6KVDBQ2")
+    ("facebk", "Facebook Anúncios"), ("openai", "OpenAI"), ("localiza", "Localiza"),
 ]
 
 
@@ -1265,8 +1267,9 @@ def carregar_arquivo(nome, conteudo):
             raise ValueError("PDF sem texto (é imagem, ou foi impresso com o texto virado "
                              "desenho); envie o extrato em OFX, Excel ou o PDF gerado pelo banco.")
         raise ValueError("PDF não reconhecido (são lidos extratos de BB, Bradesco, Itaú, "
-                         "Santander, Nubank, Sicredi e XP, faturas de BB, Bradesco e Itaú, e "
-                         "as aplicações desses bancos); envie o extrato em CSV, Excel ou OFX.")
+                         "Santander, Nubank, Sicredi e XP, faturas de BB, Bradesco, Itaú e "
+                         "Sicoob, e as aplicações desses bancos); envie o extrato em CSV, Excel "
+                         "ou OFX.")
     # Planilha (CSV/Excel/texto); outros formatos (XML de nota fiscal, imagens...) não são
     # extrato e virariam uma planilha sem sentido
     if ext not in FORMATOS_PLANILHA and "." in nome:
