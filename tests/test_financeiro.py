@@ -833,3 +833,31 @@ def test_xml_de_nota_e_outros_formatos_sao_recusados():
     # CSV continua sendo lido como planilha
     r = carregar_arquivo("extrato.csv", "Data;Descrição;Valor\n01/09/2026;PADARIA;-10,00\n".encode())
     assert r["tipo"] == "tabela"
+
+
+@pytest.mark.parametrize("descricao,categoria,sub", [
+    # "mercado" é a loja dentro do Mercado Livre, não supermercado
+    ("MERCADOLIVRE*MERCADO", "SHOPPING", "Compras online"),
+    ("SUPERMERCADO EXEMPLO", "ALIMENTAÇÃO", None),
+    ("MULTPECAS", "TRANSPORTE", "Manutenção do veículo"),
+    ("AUTO PECAS EXEMPLO", "TRANSPORTE", "Manutenção do veículo"),
+    ("NOSSA MOTO EXEMPLO", "TRANSPORTE", "Manutenção do veículo"),
+    ("RN BORRACHAS", "TRANSPORTE", "Manutenção do veículo"),
+    ("SUCATROCA DESMONTE", "TRANSPORTE", "Manutenção do veículo"),
+    ("CIRNE PNEUS", "TRANSPORTE", "Manutenção do veículo"),
+    ("LOCALIZA RAC EXEMPLO", "TRANSPORTE", "Aluguel de veículo"),
+])
+def test_lojas_online_e_manutencao_de_veiculo(descricao, categoria, sub):
+    from financeiro import subcategorizar
+    assert categorizar(descricao, -10.0) == categoria
+    if sub:
+        assert subcategorizar(categoria, descricao) == sub
+
+
+def test_extrato_de_empresa():
+    from financeiro import eh_extrato_pj
+    assert eh_extrato_pj("EXTRATO DE FATURA\nEMPRESA EXEMPLO LTDA\nConta Cartão: 123")
+    assert eh_extrato_pj("Resumo da fatura\nCartão\nSicoob Mastercard Empresarial Pro\n")
+    # Pessoa física: o número da cooperativa e um pagamento a condomínio não contam
+    assert not eh_extrato_pj("Dados da conta\nFULANO DE TAL\nCooperativa: 2207 Conta: 1-0\n"
+                             "04/09 Pagamento para condominio exemplo -R$ 1.195,98")

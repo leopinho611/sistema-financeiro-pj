@@ -29,7 +29,10 @@ CATEGORIAS = {
                    "uber*", "99 ride", "99app", "99 tecnologia", "onibus", "pedagio",
                    "ipva", "detran",
                    "shell", "ipiranga", "youse", "seguro auto", "sefaz",
-                   "multa transito", "multa de transito", "licenciamento"],
+                   "multa transito", "multa de transito", "licenciamento",
+                   "autopec*", "auto pec*", "multpec*", "motopec*", "pneu*", "borracha*",
+                   "desmonte*", "sucatroca", "oficina", "mecanica", "funilaria", "moto",
+                   "yamaha", "localiza"],
     "ALIMENTAÇÃO": ["restaurante", "lanchonete", "comida", "mercado", "supermercado",
                     "padaria", "panificadora", "pao", "delivery", "ifood", "rappi",
                     "acougue", "carnes", "frios", "hortifruti", "sacolao", "nordestao",
@@ -113,6 +116,9 @@ def _padrao(palavras):
 
 
 _PADROES = {categoria: _padrao(palavras) for categoria, palavras in CATEGORIAS.items()}
+# Lojas online vêm antes das outras palavras: em "MERCADOLIVRE*MERCADO" o "mercado" é o nome
+# da loja dentro do Mercado Livre, não um supermercado
+_PADRAO_LOJA_ONLINE = _padrao(["mercadolivre", "amazon*", "shopee", "shein", "magalu"])
 _PADRAO_APLICACAO = _padrao(PALAVRAS_APLICACAO)
 _PADRAO_FATURA = _padrao(PALAVRAS_FATURA)
 
@@ -150,6 +156,8 @@ def categorizar(descricao, valor=None, padrao=CATEGORIA_PADRAO):
         return CATEGORIA_FATURA
     if valor is not None and valor > 0:
         return CATEGORIA_ENTRADA
+    if _PADRAO_LOJA_ONLINE.search(texto):
+        return "SHOPPING"
     for categoria, palavras in _PADROES.items():
         if palavras.search(texto):
             return categoria
@@ -456,6 +464,10 @@ SUBCATEGORIAS = {
                                       "indriver"],
         "Estacionamento": ["estacionamento*", "estapar", "zona azul"],
         "IPVA e multas": ["ipva", "sefaz", "detran", "licenciamento", "multa"],
+        "Manutenção do veículo": ["autopec*", "auto pec*", "multpec*", "motopec*", "pneu*",
+                                  "borracha*", "desmonte*", "sucatroca", "oficina", "mecanica",
+                                  "funilaria", "moto", "yamaha"],
+        "Aluguel de veículo": ["localiza", "movida", "unidas"],
     },
     "CASA": {
         "Água": ["agua", "caern"],
@@ -1224,6 +1236,28 @@ def expandir_zip(conteudo):
 
 FORMATOS_PLANILHA = {"csv", "xlsx", "xls", "excel", "txt", "tsv"}
 
+# Sinais de que o extrato é de empresa (PJ), procurados no cabeçalho do PDF: o tipo de conta
+# ou cartão ("Empresarial"), ou o titular com nome de empresa ("... LTDA", "Associação ...").
+# Sem "CNPJ", "S.A." e "cooperativa": o nome do próprio banco costuma vir assim
+_SINAIS_PJ = re.compile(r"\b(empresarial|empresas|net empresa|pessoa juridica|conta pj|ltda|"
+                        r"eireli|epp|associacao|condominio|fundacao|sindicato)\b")
+
+
+def eh_extrato_pj(texto):
+    """O PDF parece ser de empresa (conta ou cartão PJ)? Olha só as primeiras linhas e só as
+    que não têm números, para não confundir com um lançamento ("Pagamento para condomínio
+    ... R$ 1.195,98") nem com o número da cooperativa."""
+    for linha in texto.splitlines()[:25]:
+        linha = normalizar(linha)
+        if not re.search(r"\d", linha) and _SINAIS_PJ.search(linha):
+            return True
+    return False
+
+
+def _com_pj(texto, resultado):
+    resultado["pj"] = eh_extrato_pj(texto)
+    return resultado
+
 
 def carregar_arquivo(nome, conteudo):
     """Lê um arquivo enviado.
@@ -1241,16 +1275,17 @@ def carregar_arquivo(nome, conteudo):
     if ext == "pdf" or conteudo[:4] == b"%PDF":
         texto = "\n".join(p.extract_text() or "" for p in PdfReader(io.BytesIO(conteudo)).pages)
         if eh_fatura_bb(texto):
-            return {"tipo": "transacoes", "dados": ler_fatura_bb(texto), "conta": "BB Cartão"}
+            return _com_pj(texto, {"tipo": "transacoes", "dados": ler_fatura_bb(texto),
+                                   "conta": "BB Cartão"})
         if eh_extrato_sicredi(texto):
-            return {"tipo": "transacoes", "dados": ler_extrato_sicredi_pdf(texto),
-                    "conta": "Sicredi", "titular": titular_sicredi(texto)}
+            return _com_pj(texto, {"tipo": "transacoes", "dados": ler_extrato_sicredi_pdf(texto),
+                                   "conta": "Sicredi", "titular": titular_sicredi(texto)})
         if eh_extrato_xp(texto):
-            return {"tipo": "transacoes", "dados": ler_extrato_xp_pdf(texto), "conta": "XP",
-                    "titular": titular_xp(texto)}
+            return _com_pj(texto, {"tipo": "transacoes", "dados": ler_extrato_xp_pdf(texto),
+                                   "conta": "XP", "titular": titular_xp(texto)})
         if eh_extrato_nubank(texto):
-            return {"tipo": "transacoes", "dados": ler_extrato_nubank_pdf(texto),
-                    "conta": "Nubank"}
+            return _com_pj(texto, {"tipo": "transacoes", "dados": ler_extrato_nubank_pdf(texto),
+                                   "conta": "Nubank"})
         from leitores_pdf import SemLancamentos, ler_pdf_de_banco
         dados = ler_pdf_de_banco(texto, conteudo)
         if dados is not None:
@@ -1261,8 +1296,8 @@ def carregar_arquivo(nome, conteudo):
             if dados.empty:
                 raise SemLancamentos(sem_valor["Conta"].iat[0],
                                      sem_valor["Descrição"].iat[0].lower())
-            return {"tipo": "transacoes", "dados": dados,
-                    "conta": " + ".join(dados["Conta"].unique())}
+            return _com_pj(texto, {"tipo": "transacoes", "dados": dados,
+                                   "conta": " + ".join(dados["Conta"].unique())})
         if len(texto.strip()) < 20:
             raise ValueError("PDF sem texto (é imagem, ou foi impresso com o texto virado "
                              "desenho); envie o extrato em OFX, Excel ou o PDF gerado pelo banco.")

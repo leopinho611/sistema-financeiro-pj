@@ -40,6 +40,7 @@ from financeiro import (
     consolidar,
     detectar_colunas,
     eh_empresa,
+    normalizar,
     expandir_zip,
     extrair_cnpj,
     formatar_reais,
@@ -62,7 +63,7 @@ import relatorio
 # CONFIGURAÇÃO DO APP
 # ============================================================================
 st.set_page_config(
-    page_title="Contas em Dia",
+    page_title="Suas Contas em Dia",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state=210,   # barra lateral estreita (o visitante pode arrastar a borda)
@@ -381,11 +382,11 @@ st.markdown(f"""
 # Cabeçalho com o botão de compartilhar: no celular abre a janela de compartilhar do aparelho
 # (WhatsApp, e-mail...); no computador, copia o link
 ENDERECO_APP = "https://sistema-financeiro-pj-cfzvrv3ryghyyfppncz97u.streamlit.app/"
-TEXTO_COMPARTILHAR = ("Contas em Dia: envie o extrato do banco e veja para onde vai o seu "
+TEXTO_COMPARTILHAR = ("Suas Contas em Dia: envie o extrato do banco e veja para onde vai o seu "
                       "dinheiro, em segundos. Grátis e sem guardar seus dados.")
 st.html(f"""
 <div class="cabecalho">
-  <h1>Contas em Dia</h1>
+  <h1>Suas Contas em Dia</h1>
   <div class="lado">
     <button id="compartilhar" class="compartilhar" type="button">↗ Compartilhar</button>
     <p class="sistema">Sistema de Controle Financeiro</p>
@@ -397,7 +398,7 @@ st.html(f"""
   const b = document.getElementById("compartilhar");
   if (!b || b.dataset.pronto) return;
   b.dataset.pronto = "1";
-  const dados = {{title: "Contas em Dia", text: {json.dumps(TEXTO_COMPARTILHAR)}, url: {json.dumps(ENDERECO_APP)}}};
+  const dados = {{title: "Suas Contas em Dia", text: {json.dumps(TEXTO_COMPARTILHAR)}, url: {json.dumps(ENDERECO_APP)}}};
   b.addEventListener("click", async () => {{
     try {{
       if (navigator.share) {{ await navigator.share(dados); return; }}
@@ -834,7 +835,12 @@ def cnpjs_pendentes(t, regras):
 
 
 def salvar_regras(novas_comp, novas_pess, descricao):
-    """Grava as regras novas; empresas no arquivo compartilhado, pessoas só na sessão."""
+    """Grava as regras novas. Só o administrador grava na base compartilhada (empresas, vale
+    para todos); para os demais, tudo fica nas regras pessoais, que valem só para a pessoa.
+    Pix para pessoas nunca vai para a base, nem pelo administrador."""
+    if not st.session_state.get("admin_ok"):
+        novas_pess = juntar(novas_pess, novas_comp)
+        novas_comp = regras_vazias()
     destino = None
     if not novas_comp.empty:
         atuais = repo_regras.carregar()  # sem cache: não apagar regra salva por outra pessoa
@@ -850,7 +856,8 @@ def salvar_regras(novas_comp, novas_pess, descricao):
             "neste servidor (configure o GitHub para guardar de vez)"
         partes.append(f"{len(novas_comp)} regra(s) de empresa salva(s) {onde}")
     if not novas_pess.empty:
-        partes.append(f"{len(novas_pess)} regra(s) pessoal(is) guardada(s) nesta sessão")
+        partes.append(f"{len(novas_pess)} regra(s) guardada(s) para você nesta sessão "
+                      "(baixe em 📚 Regras salvas para usar na próxima vez)")
     st.session_state["aviso_regras"] = " · ".join(partes)
 
 
@@ -871,7 +878,7 @@ NO_CELULAR = any(x in _navegador for x in ("android", "iphone", "ipad", "mobile"
 st.session_state.setdefault("arquivos_principal", [])
 
 with st.sidebar:
-    st.markdown('<div class="marca"><b>CONTAS EM DIA</b><span>CONTROLE FINANCEIRO</span></div>'
+    st.markdown('<div class="marca"><b>SUAS CONTAS EM DIA</b><span>CONTROLE FINANCEIRO</span></div>'
                 '<p class="secao">📁 Seus extratos</p>', unsafe_allow_html=True)
     arquivos_lateral = st.file_uploader(
         "Escolha seus extratos", label_visibility="collapsed",
@@ -1059,9 +1066,19 @@ if st.session_state["plus"] and st.session_state.get("plus_ate") \
     st.session_state["aviso_plus"] = (f"Seu acesso Plus venceu em "
                                       f"{st.session_state['plus_ate']:%d/%m/%Y}.")
 
+# Administrador (entrou pelo ?admin=1 e voltou ao app): tem o Plus e as classificações dele
+# valem para todos os usuários
+ADMIN = bool(st.session_state.get("admin_ok"))
+
 with st.sidebar:
     st.markdown('<p class="secao">⭐ Plus</p>', unsafe_allow_html=True)
-    if st.session_state["plus"]:
+    if ADMIN:
+        st.markdown("🔧 **Administrador**")
+        st.caption("Suas classificações valem para todos os usuários.")
+        if st.button("Sair do modo administrador"):
+            st.session_state["admin_ok"] = False
+            st.rerun()
+    elif st.session_state["plus"]:
         ate = st.session_state.get("plus_ate")
         st.markdown("⭐ **Plus ativo**" + (f" até {ate:%d/%m/%Y}" if ate else ""))
         if st.session_state.get("plus_titular"):
@@ -1090,7 +1107,7 @@ with st.sidebar:
             if st.button("Quero o Plus" if not st.session_state.get("aviso_plus")
                          else "Renovar o Plus", key="assinar_lateral"):
                 abrir_assinatura()
-PLUS = st.session_state["plus"]
+PLUS = st.session_state["plus"] or ADMIN
 
 # ============================================================================
 # ADMINISTRAÇÃO (endereço do app + ?admin=1): gerar códigos Plus
@@ -1111,7 +1128,12 @@ def pagina_admin():
                     st.rerun()
                 st.error("Senha incorreta.")
         return
-    if st.button("Sair da administração"):
+    c1, c2 = st.columns(2)
+    if c1.button("📊 Abrir o app como administrador", type="primary",
+                 help="Com o Plus liberado. O que você classificar vale para todos os usuários."):
+        st.query_params.clear()
+        st.rerun()
+    if c2.button("Sair da administração"):
         st.session_state["admin_ok"] = False
         st.rerun()
     if not CHAVE_PLUS:
@@ -1263,6 +1285,7 @@ with corpo:
     leitura = []
     ids_lidos, colunas_usadas = [], []   # identificam o que foi lido, para a memória
     titulares = []   # nome do titular, quando o PDF traz (Sicredi, XP)
+    pj_detectado = False   # algum PDF é de empresa (cartão "Empresarial", titular LTDA...)
     layouts = {}   # extratos com as mesmas colunas compartilham a identificação
     # CSV/Excel primeiro, depois OFX e PDF: quando o mesmo mês vem em mais de um formato,
     # fica a versão do primeiro (o CSV tem a descrição mais completa)
@@ -1319,6 +1342,7 @@ with corpo:
             leitura.append({"Arquivo": arquivo.name, "Conta": "—", "Situação": f"⚠️ ignorado: {e}"})
             continue
         r["nome"] = arquivo.name
+        pj_detectado = pj_detectado or bool(r.get("pj"))
         if r.get("titular"):
             titulares.append(r["titular"])
         if r["tipo"] == "transacoes":
@@ -1516,11 +1540,28 @@ with corpo:
                  "⭐ Saúde financeira", "⭐ Classificar"] if PLUS
                 else ["⭐ Área Plus"]) + ["❓ Ajuda"]
     with menu_lateral:
+        # Empresa: "Casa" vira "Sede" na tela. Liga sozinho quando o PDF é de empresa
+        modo_pj = st.toggle("🏢 Extratos de empresa (PJ)", value=pj_detectado,
+                            key=f"modo_pj_{pj_detectado}",
+                            help="Para empresa, a categoria Casa aparece como Sede (aluguel, "
+                                 "condomínio, luz, internet...). Liga sozinho quando o extrato "
+                                 "em PDF é de empresa.")
         st.markdown('<p class="secao">🧭 Navegação</p>', unsafe_allow_html=True)
         with st.container(key="menu"):
             pagina = st.radio("Navegação", PAGINAS, label_visibility="collapsed",
                               key="pagina_plus" if PLUS else "pagina_livre",
                               persist_state="page", width="stretch")
+
+    # As regras guardam "CASA"; só a tela mostra "SEDE" no modo empresa
+    def exibir_cat(categoria):
+        return "SEDE" if modo_pj and categoria == "CASA" else categoria
+
+    def interna_cat(categoria):
+        return "CASA" if categoria == "SEDE" else categoria
+
+    if modo_pj:
+        todos = todos.assign(Categoria=todos["Categoria"].map(exibir_cat))
+    cats_editaveis = [exibir_cat(c) for c in categorias_editaveis()]
 
     def escolher_categorias(opcoes, nome, rotulo):
         """Pílulas para escolher categorias ou contas (todas marcadas no início). A chave
@@ -1875,7 +1916,7 @@ with corpo:
     saidas_forn["pendente"] = [c == "TRANSFERÊNCIA" or nao_identificado(c, sc) for c, sc in
                                zip(saidas_forn["Categoria"], saidas_forn["Subcategoria"])]
     def subcategoria_valida(categoria, sub):
-        validas = subcategorias_de(categoria)
+        validas = subcategorias_de(interna_cat(categoria))
         return sub if sub in validas else validas[-1]
 
     def secao_cnpj(lembrar):
@@ -1889,7 +1930,8 @@ with corpo:
             return
         totais = -saidas_forn.groupby("chave")["Valor"].sum()
         tab = auto.assign(Total=auto["chave"].map(totais).fillna(0).map(formatar_reais),
-                          Subcategoria=auto["Subcategoria"].replace("", SEM_SUB))
+                          Subcategoria=auto["Subcategoria"].replace("", SEM_SUB),
+                          Categoria=auto["Categoria"].map(exibir_cat))
         ok = (auto["Situação"] == "✅ classificado").sum()
         st.markdown(f"**{ok} de {len(auto)} fornecedor(es) classificados automaticamente** pela "
                     "atividade principal na Receita Federal (dados públicos, BrasilAPI). Mude a "
@@ -1901,7 +1943,7 @@ with corpo:
             disabled=["Fornecedor", "Nome na Receita", "Atividade principal (CNAE)", "Total",
                       "Situação"],
             column_config={
-                "Categoria": st.column_config.SelectboxColumn(options=categorias_editaveis()),
+                "Categoria": st.column_config.SelectboxColumn(options=cats_editaveis),
                 "Subcategoria": st.column_config.SelectboxColumn(options=todas_subs),
             })
         mudou = editado[(editado["Categoria"] != tab["Categoria"])
@@ -1912,7 +1954,7 @@ with corpo:
             for _, r in linhas.iterrows():
                 nome = r["Nome na Receita"] if not r["Nome na Receita"].startswith("(") \
                     else r["Fornecedor"]
-                regra = nova_regra(r["chave"], nome, r["Categoria"],
+                regra = nova_regra(r["chave"], nome, interna_cat(r["Categoria"]),
                                    subcategoria_valida(r["Categoria"], r["Subcategoria"]),
                                    "cnpj", r["CNPJ"], r["cnae"])
                 # MEI tem o nome da pessoa no CNPJ: não vai para o arquivo público
@@ -1925,7 +1967,7 @@ with corpo:
             st.session_state["regras_sessao"] = juntar(st.session_state["regras_sessao"],
                                                        pd.concat(novas + pessoais_mei))
             atual = auto.copy()
-            atual.loc[mudou.index, "Categoria"] = mudou["Categoria"]
+            atual.loc[mudou.index, "Categoria"] = mudou["Categoria"].map(interna_cat)
             atual.loc[mudou.index, "Subcategoria"] = [
                 subcategoria_valida(c, sc) for c, sc in zip(mudou["Categoria"],
                                                             mudou["Subcategoria"])]
@@ -2228,22 +2270,27 @@ with corpo:
             aprende e, nos próximos extratos, já classifica esse fornecedor sozinho.
 
             1. A tabela mostra cada **fornecedor** (por padrão, só os não identificados e as
-               transferências). Desligue o botão acima da tabela para ver todos.
+               transferências). Para corrigir um que já tem categoria (ex.: Mercado Livre em
+               Alimentação), digite o nome na busca ou desligue o botão acima da tabela.
             2. **Dê dois cliques** na célula **Categoria** (e, se quiser, em **Subcategoria**)
                e escolha a opção certa na lista.
             3. Clique em **💾 Salvar e lembrar**. Pronto: a regra vale para todos os
                lançamentos desse fornecedor, hoje e nos próximos meses.
 
-            **Onde fica guardado:** empresas vão para a base compartilhada (dados públicos,
-            ajudam todo mundo). Pix para pessoas nunca vai para a base: fica nas suas regras
-            pessoais, que você baixa em arquivo e recarrega na próxima vez.
-            """)
+            **Onde fica guardado:** as suas correções valem **só para você**: ficam nas suas
+            regras, que você baixa em arquivo (em 📚 Regras salvas) e recarrega na próxima vez.
+            """ + ("""
+            **🔧 Administrador:** as correções de empresas vão para a **base de todos** e
+            passam a valer para todos os usuários. Pix para pessoas nunca vai para a base.
+            """ if ADMIN else ""))
 
         st.subheader("Corrigir categorias por fornecedor")
         dica("Escolha a categoria e a subcategoria na tabela e clique em Salvar · "
              "o app lembra nas próximas vezes, para todos os lançamentos desse fornecedor")
-        so_pendentes = st.toggle("Mostrar só os não identificados e as transferências",
-                                 value=True)
+        b1, b2 = st.columns([1.2, 1], vertical_alignment="bottom")
+        busca_forn = b1.text_input("🔎 Buscar fornecedor", placeholder="Ex.: Mercado Livre")
+        so_pendentes = b2.toggle("Só os não identificados e as transferências", value=True,
+                                 disabled=bool(busca_forn))
 
         grupo = (saidas_forn.groupby("chave")
                  .agg(Fornecedor=("Fornecedor", lambda v: max(v.unique(), key=len)),
@@ -2253,17 +2300,21 @@ with corpo:
                       Transações=("Valor", "count"),
                       pendente=("pendente", "any"))
                  .sort_values("Total", ascending=False).reset_index())
-        if so_pendentes:
+        if busca_forn:   # a busca procura em todos, com ou sem categoria
+            achou = grupo["Fornecedor"].map(normalizar).str.contains(normalizar(busca_forn),
+                                                                     regex=False)
+            grupo = grupo[achou].reset_index(drop=True)
+        elif so_pendentes:
             grupo = grupo[grupo["pendente"]].reset_index(drop=True)
         grupo["Subcategoria"] = grupo["Subcategoria"].replace("", SEM_SUB).fillna(SEM_SUB)
         grupo["Valor"] = grupo["Total"].map(formatar_reais)
 
         editado = st.data_editor(
-            grupo, hide_index=True, width="stretch", key=f"editor_regras_{so_pendentes}",
+            grupo, hide_index=True, width="stretch", key=f"editor_regras_{so_pendentes}_{busca_forn}",
             column_order=["Fornecedor", "Categoria", "Subcategoria", "Valor", "Transações"],
             disabled=["chave", "Fornecedor", "Valor", "Transações"],
             column_config={
-                "Categoria": st.column_config.SelectboxColumn(options=categorias_editaveis(),
+                "Categoria": st.column_config.SelectboxColumn(options=cats_editaveis,
                                                               required=True),
                 "Subcategoria": st.column_config.SelectboxColumn(
                     options=todas_subs, help="Se não combinar com a categoria, vira \"Outros\""),
@@ -2278,7 +2329,8 @@ with corpo:
                 sub = subcategoria_valida(r["Categoria"], r["Subcategoria"])
                 linhas = saidas_forn[saidas_forn["chave"] == r["chave"]]
                 cnpj = next((c for c in map(extrair_cnpj, linhas["Descrição"]) if c), "")
-                regra = nova_regra(r["chave"], r["Fornecedor"], r["Categoria"], sub, "usuario", cnpj)
+                regra = nova_regra(r["chave"], r["Fornecedor"], interna_cat(r["Categoria"]), sub,
+                                   "usuario", cnpj)
                 (comp if eh_empresa(linhas["Descrição"], linhas["Conta"]) else pess).append(regra)
             try:
                 salvar_regras(pd.concat(comp) if comp else regras_vazias(),
@@ -2287,8 +2339,9 @@ with corpo:
                 st.rerun()
             except Exception as e:
                 st.error(f"Não foi possível salvar as regras: {e}")
-        st.caption("🔒 Empresas (cartão, boleto, débito ou CNPJ) vão para as regras compartilhadas. "
-                   "Pix para pessoas fica só nas suas regras pessoais, para não expor nomes.")
+        st.caption("🔧 Como administrador, empresas (cartão, boleto, débito ou CNPJ) vão para a base "
+                   "de todos; Pix para pessoas fica só nas suas regras, para não expor nomes."
+                   if ADMIN else "🔒 As suas correções valem só para você.")
 
         st.caption("🔎 Os Pix para empresas que o app classificou pela Receita (CNPJ) estão "
                    "em 📋 Transações, para conferir e lembrar.")
