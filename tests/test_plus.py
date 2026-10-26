@@ -80,6 +80,17 @@ def test_duas_compras_iguais_em_meses_diferentes_ficam_separadas():
     assert sorted(tabela["Restam"]) == [1, 2]
 
 
+def test_duas_compras_na_mesma_loja_e_mes_com_valores_diferentes_ficam_separadas():
+    c = "Sicoob Cartão"
+    t = _t([
+        _gasto("2026-08-19", "Locadora Exemplo", 312.38, conta=c, parcela=1, parcelas=3),
+        _gasto("2026-08-19", "Locadora Exemplo", 206.23, conta=c, parcela=1, parcelas=3),
+    ])
+    tabela, _ = plus.parcelas_futuras(t)
+    assert sorted(tabela["Valor da parcela"]) == [206.23, 312.38]
+    assert round(tabela["Total restante"].sum(), 2) == 1037.22
+
+
 def test_parcela_estimada_quando_falta_fatura_recente():
     c = "BB Cartão"
     t = _t([

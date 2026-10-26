@@ -50,6 +50,11 @@ def _tabela(lancamentos, conta, cartao=False):
                           conta)
     if cartao:  # no cartão, valor positivo é estorno, não receita
         t.loc[t["Valor"] > 0, "Categoria"] = CATEGORIA_ESTORNO
+        # "LOJA 04/10" no fim da descrição: parcela 4 de 10 (para as parcelas futuras)
+        parc = t["Descrição"].str.extract(r"\b(\d{1,3})/(\d{1,3})\s*$").astype(float)
+        valida = (parc[0] >= 1) & (parc[0] <= parc[1]) & (parc[1] > 1)
+        t["Parcela"] = parc[0].where(valida)
+        t["Parcelas"] = parc[1].where(valida)
     return t
 
 

@@ -43,8 +43,11 @@ def parcelas_futuras(t):
     # a data impressa nem sempre é a da compra (a anuidade traz a data de cada mês)
     # e o valor pode variar 1 centavo entre parcelas
     p["_compra"] = [d.to_period("M") - (int(k) - 1) for d, k in zip(p["Data"], p["Parcela"])]
+    # Duas compras na mesma loja, no mesmo mês e com o mesmo número de parcelas (ex.: dois
+    # aluguéis de carro em 3x) se separam pelo valor, arredondado ao real por causa do centavo
+    p["_v"] = p["Valor"].abs().round(0)
     p = p.sort_values("Data")
-    compras = (p.groupby(["Conta", "_k", "Parcelas", "_compra"])
+    compras = (p.groupby(["Conta", "_k", "Parcelas", "_compra", "_v"])
                .agg(Fornecedor=("Fornecedor", "last"), Parcela=("Parcela", "max"),
                     Valor=("Valor", "last"), Data=("Data", "max"))
                .reset_index())

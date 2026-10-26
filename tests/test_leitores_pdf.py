@@ -288,6 +288,10 @@ def test_fatura_sicoob():
     assert por.loc["ANUIDADE MASTERCARD 01/12", "Valor"] == -29.90
     assert por.loc["DESC ANUIDADE POR USO MAS", "Valor"] == 29.90       # estorno
     assert por.loc["FACEBK* AAAAA11111", "Fornecedor"] == "Facebook Anúncios"
+    # A parcela no fim da descrição vira Parcela/Parcelas (para as parcelas futuras)
+    assert (por.loc["LOJA EXEMPLO 10/10", "Parcela"], por.loc["LOJA EXEMPLO 10/10", "Parcelas"]) \
+        == (10, 10)
+    assert pd.isna(por.loc["PADARIA EXEMPLO", "Parcela"])
 
 
 def test_boleto_da_fatura_sicoob_avisa_que_falta_o_detalhamento():
