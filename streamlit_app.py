@@ -878,8 +878,9 @@ with st.sidebar:
         type=TIPOS_EXTRATO,
         accept_multiple_files=True,
         help="Extratos em CSV, Excel ou OFX de qualquer banco, de vários meses e contas. "
-             "Em PDF: extratos Nubank, Sicredi e XP, e fatura do cartão BB. Pode mandar o mesmo "
-             "mês em mais de um formato: as repetições são descartadas. Pode mandar "
+             "Em PDF: extratos de vários bancos e faturas de BB, Bradesco, Itaú e Sicoob. "
+             "Pode mandar o mesmo mês em mais de um formato: as repetições são descartadas. "
+             "Pode mandar "
              "uma pasta compactada (.zip)."
     )
     if st.session_state["arquivos_principal"]:
@@ -1010,7 +1011,8 @@ def secao_ajuda():
         ("Como baixo o extrato do meu banco?",
          "No app ou no site do banco, abra o **extrato** da conta (ou a **fatura** do cartão) e "
          "procure a opção de **exportar, compartilhar ou baixar**. O app lê CSV, Excel e OFX de "
-         "qualquer banco e, em PDF, os extratos do Nubank, Sicredi e XP e a fatura do cartão BB. "
+         "qualquer banco e, em PDF, extratos de vários bancos e faturas de BB, Bradesco, Itaú "
+         "e Sicoob. "
          "Quanto mais meses, melhores as análises."),
         ("No celular, o arquivo fica com um \"!\" vermelho e não envia.",
          DICA_DRIVE + " O mesmo vale para OneDrive, Dropbox e outros apps de nuvem."),
@@ -1242,7 +1244,7 @@ with corpo:
            a **fatura do cartão**. Pode enviar vários meses e várias contas de uma vez.
         2. Arraste os arquivos para a área acima, ou clique em **Escolher arquivos**.
            Também dá para usar o menu lateral (📁 Seus extratos).
-        3. Em PDF: extratos da conta Nubank, Sicredi e XP, e fatura do cartão BB. Se mandar
+        3. Em PDF: extratos de vários bancos e faturas de BB, Bradesco, Itaú e Sicoob. Se mandar
            o mesmo mês em mais de um formato, as repetições são descartadas
         4. Pronto: veja o resumo, o mês a mês e as transações já separadas por categoria
 
