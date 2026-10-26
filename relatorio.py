@@ -320,7 +320,7 @@ def _sugestoes(itens, cats, parcelas, saidas_mes, pct_nao_id, guardado, qualidad
 
 
 # Essenciais × escolhas (referência comum de educação financeira)
-ESSENCIAIS = {"CASA", "SAÚDE", "TRANSPORTE", "EDUCAÇÃO", "IMPOSTOS E TAXAS",
+ESSENCIAIS = {"CASA", "SEDE", "SAÚDE", "TRANSPORTE", "EDUCAÇÃO", "IMPOSTOS E TAXAS",
               "TARIFAS BANCÁRIAS"}
 ESCOLHAS = {"LAZER", "SHOPPING", "ASSINATURAS"}
 ALIMENTACAO_ESSENCIAL = {"Supermercado", "Padaria", "Feira", "Hortifruti e açougue"}
@@ -384,7 +384,8 @@ def _melhorias(t, n_meses, qualidade, aplicacoes):
         m.append("<b>Há gastos com carro (combustível ou seguro), mas o IPVA não apareceu.</b> "
                  "Se ele foi pago por outra conta ou fora do período, não entrou nas contas; "
                  "vale reservar esse valor para o próximo ano.")
-    casa = s[(s["Categoria"] == "CASA") & s["Subcategoria"].isin(["Condomínio", "Luz", "Água"])]
+    casa = s[s["Categoria"].isin(["CASA", "SEDE"])
+             & s["Subcategoria"].isin(["Condomínio", "Luz", "Água"])]
     iptu = s["Descrição"].map(lambda d: "iptu" in normalizar(d)).any()
     if n_meses >= 12 and len(casa) >= 6 and not iptu and \
             not (s["Subcategoria"] == "Aluguel").any():
