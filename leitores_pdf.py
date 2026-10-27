@@ -352,13 +352,19 @@ def ler_fatura_sicoob(texto):
     if not m:
         raise ValueError("fatura sem data de vencimento.")
     venc = pd.to_datetime(m.group(1), format="%d/%m/%Y")
-    final = re.search(r"\((\d{4})\)", texto)
-    conta = f"Sicoob Cartão final {final.group(1)}" if final else "Sicoob Cartão"
+    # A conta do cartão é a mesma todo mês, mesmo com vários cartões (finais) na fatura
+    numero = re.search(r"Conta Cartão:\s*(\d+)", texto)
+    conta = f"Sicoob Cartão {numero.group(1)[-4:]}" if numero else "Sicoob Cartão"
     inicio = texto.find("Movimentos")
     itens, pendente = [], None
     for linha in texto[inicio:].splitlines():
-        if re.match(r"^\s*TOTAL\b", linha):
+        # Cada cartão da fatura ("GASTOS DE ... (final)") fecha com o seu TOTAL; a lista só
+        # acaba nos encargos
+        if "ENCARGOS FINANCEIROS" in linha or linha.startswith("Demostrativo"):
             break
+        if re.match(r"^\s*TOTAL\b", linha):
+            pendente = None
+            continue
         m = _LINHA_SICOOB.match(linha)
         if m:
             dia, mes, corpo = m.groups()
