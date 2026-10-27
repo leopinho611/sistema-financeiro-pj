@@ -251,6 +251,7 @@ total                        1.558,53                   5.365,62                
 FATURA_SICOOB = """SICOOB
 17/08/2026 EXTRATO DE FATURA DE CARTÃO DE CRÉDITO 11:47:48
 EMPRESA EXEMPLO LTDA
+Conta Cartão: 7564100000005678
 Fatura de AGOSTO Vencimento: 19/08/2026
 Movimentos
 -  SALDO ANTERIOR 1.000,00
@@ -258,6 +259,9 @@ Movimentos
 09/07  ANUIDADE MASTERCARD  (1234) 01/12 29,90
 09/07  DESC ANUIDADE POR USO MAS -29,90
 10/07  IOF OPERACAO EXTERIOR 3,50
+ GASTOS DE CICLANO EXEMPLO    (9999) 
+12/07  SOFTWARE EXEMPLO              Sao Paulo 100,00
+ TOTAL 100,00
  GASTOS DE FULANO EXEMPLO     (1234) 
 05/11  LOJA EXEMPLO          10/10   NATAL 108,04
 09/07  PADARIA EXEMPLO               NATAL 14,00
@@ -267,17 +271,22 @@ Movimentos
 11/07  FACEBK* AAAAA11111            ITAIM BIBI 57,30
  TOTAL 1.119,12
 Demostrativo de pagamento em R$
-Total da fatura 1.122,62
+------------------ ENCARGOS FINANCEIROS ----------------
+ROTATIVO      9,99 213,50
+Total da fatura 1.222,62
 """
 
 
 def test_fatura_sicoob():
     assert ler_pdf_de_banco(FATURA_SICOOB, b"") is not None
     t = ler_fatura_sicoob(FATURA_SICOOB)
-    assert t["Conta"].iat[0] == "Sicoob Cartão final 1234"
+    # A conta é a do cartão (a mesma todo mês), não o final de um dos cartões
+    assert t["Conta"].iat[0] == "Sicoob Cartão 5678"
     assert not t["Descrição"].str.contains("PAGAMENTO").any()   # já está na conta corrente
-    assert round(-t["Valor"].sum(), 2) == 1122.62               # o total da fatura
+    # Com dois cartões na fatura, cada um com o seu TOTAL: lê os dois
+    assert round(-t["Valor"].sum(), 2) == 1222.62               # o total da fatura
     por = t.set_index("Descrição")
+    assert por.loc["SOFTWARE EXEMPLO", "Valor"] == -100.00
     # Internacional: o valor em reais vem na linha de baixo
     assert por.loc["OPENAI *CHATGPT SUBS", "Valor"] == -99.90
     # Estabelecimento com espaços no meio fica inteiro, sem a cidade
