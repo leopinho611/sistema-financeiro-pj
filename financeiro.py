@@ -5,6 +5,10 @@ Separado da interface (streamlit_app.py) para poder ser testado sem o Streamlit.
 """
 
 import io
+import os
+import shutil
+import subprocess
+import tempfile
 import re
 import unicodedata
 import warnings
@@ -60,9 +64,9 @@ CATEGORIAS = {
                          "cofins", "iss", "inss", "darf",
                          "gps", "csll", "simples nacional", "gru", "pref mun",
                          "prefeitura", "receita federal", "rfb", "iptu",
-                         "conselho regional"],
+                         "conselho regional", "orgaos gov"],
     "TARIFAS BANCÁRIAS": ["tarifa", "iof", "juros", "anuidade", "cesta", "encargo",
-                          "multa"],
+                          "multa", "tar pix", "tar ted"],
     "SERVIÇOS DE TERCEIROS": ["consultoria", "consulting", "assessoria", "contabilidade",
                               "contabil*", "serv empresariais", "servicos empresariais",
                               "getninjas", "advocacia", "advogad*", "cartorio"],
@@ -500,13 +504,13 @@ SUBCATEGORIAS = {
         "Federais": ["darf", "gru", "receita federal", "rfb", "irpf", "irpj", "i r parcelam*",
                      "inss",
                      "simples nacional", "gps", "csll", "cofins", "pis"],
-        "Estaduais": ["icms", "sefaz"],
+        "Estaduais": ["icms", "sefaz", "governo do rn", "orgaos gov"],
         "Municipais": ["pref mun", "prefeitura", "iptu", "iss", "pmsp"],
         "Conselho profissional": ["conselho regional", "crc", "oab", "crea", "crm"],
     },
     "TARIFAS BANCÁRIAS": {
         "Anuidade do cartão": ["anuidade"],
-        "Pacote de serviços": ["tarifa", "cesta", "pacote de servicos"],
+        "Pacote de serviços": ["tarifa", "cesta", "pacote de servicos", "tar pix", "tar ted"],
         "IOF e juros": ["iof", "juros", "encargo"],
     },
 }
@@ -746,7 +750,8 @@ def eh_empresa(descricoes, contas):
 # Partes da descrição que dizem o tipo do lançamento, não quem recebeu
 _PARTES_GENERICAS = ("transferencia", "pix", "ted", "doc", "pagamento", "pagto", "pgto",
                      "compra", "debito", "credito", "recebid", "enviad", "tarifa",
-                     "cobranca", "boleto", "recebimento", "liquidacao")
+                     "cobranca", "boleto", "recebimento", "liquidacao", "deb pix",
+                     "devolucao pix", "pag orgaos")
 # Prefixos de maquininha/intermediador: "MP*LOJA", "PG *LOJA", "DL*99 RIDE"
 _PREFIXO_INTERMEDIADOR = re.compile(r"^[A-Z0-9]{1,4}\s?\*\s*", re.IGNORECASE)
 
@@ -1239,6 +1244,30 @@ def expandir_zip(conteudo):
 
 
 FORMATOS_PLANILHA = {"csv", "xlsx", "xls", "excel", "txt", "tsv"}
+MAX_PAGINAS_OCR = 20
+
+
+def texto_por_ocr(conteudo):
+    """Texto de um PDF sem texto, pelo OCR (tesseract, em português). Precisa dos programas
+    pdftoppm e tesseract no servidor (packages.txt); sem eles, devolve None."""
+    if not (shutil.which("pdftoppm") and shutil.which("tesseract")):
+        return None
+    with tempfile.TemporaryDirectory() as pasta:
+        pdf = os.path.join(pasta, "extrato.pdf")
+        with open(pdf, "wb") as f:
+            f.write(conteudo)
+        try:
+            subprocess.run(["pdftoppm", "-r", "300", "-gray", "-png", "-l",
+                            str(MAX_PAGINAS_OCR), pdf, os.path.join(pasta, "p")],
+                           check=True, capture_output=True, timeout=120)
+            paginas = sorted(f for f in os.listdir(pasta) if f.endswith(".png"))
+            textos = [subprocess.run(["tesseract", os.path.join(pasta, p), "-", "-l", "por",
+                                      "--psm", "6"], check=True, capture_output=True,
+                                     timeout=120).stdout.decode("utf-8", "ignore")
+                      for p in paginas]
+        except (subprocess.SubprocessError, OSError):
+            return None
+    return "\n".join(textos)
 
 # Sinais de que o extrato é de empresa (PJ), procurados no cabeçalho do PDF: o tipo de conta
 # ou cartão ("Empresarial"), ou o titular com nome de empresa ("... LTDA", "Associação ...").
@@ -1259,6 +1288,9 @@ def eh_extrato_pj(texto):
         if titular and _SINAIS_PJ.search(titular.group(2)):
             return True
         if not re.search(r"\d", linha) and _SINAIS_PJ.search(linha):
+            return True
+        # "CNPJ: 07.207.229/0003-02" numa linha só dele, no cabeçalho: o titular é empresa
+        if re.match(r"^cnpj:?\s*\d", linha):
             return True
     return False
 
@@ -1308,6 +1340,13 @@ def carregar_arquivo(nome, conteudo):
             return _com_pj(texto, {"tipo": "transacoes", "dados": dados,
                                    "conta": " + ".join(dados["Conta"].unique())})
         if len(texto.strip()) < 20:
+            # Sem texto (escaneado, ou impresso com as letras viradas desenho): tenta o OCR
+            from leitores_pdf import ler_texto_ocr
+            texto_ocr = texto_por_ocr(conteudo)
+            dados = ler_texto_ocr(texto_ocr) if texto_ocr else None
+            if dados is not None:
+                return _com_pj(texto_ocr, {"tipo": "transacoes", "dados": dados, "ocr": True,
+                                           "conta": " + ".join(dados["Conta"].unique())})
             raise ValueError("PDF sem texto (é imagem, ou foi impresso com o texto virado "
                              "desenho); envie o extrato em OFX, Excel ou o PDF gerado pelo banco.")
         raise ValueError("PDF não reconhecido (são lidos extratos de BB, Bradesco, Itaú, "

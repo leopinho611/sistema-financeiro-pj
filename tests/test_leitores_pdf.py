@@ -17,6 +17,8 @@ from leitores_pdf import (
     ler_fatura_itau,
     ler_fatura_sicoob,
     ler_extrato_sicoob,
+    ler_extrato_caixa,
+    ler_extrato_bnb,
     ler_pdf_de_banco,
     eh_resumo_invest_facil,
     ler_resumo_invest_facil,
@@ -365,3 +367,73 @@ def test_extrato_sicoob():
     assert por.loc["APLICAÇÃO RDC", "Valor"] == -200.00   # o documento "41 - 16" não entra
     assert por.loc["Cheque pago", "Valor"] == -300.00
     assert t.loc[t["Valor"] > 0, "Descrição"].str.startswith("TED recebida").all()
+
+
+# Extrato da Caixa (Internet Banking), com dados fictícios: o "-" do débito vem solto e o
+# CNPJ às vezes quebra de linha
+EXTRATO_CAIXA = """EMPRESA EXEMPLO LTDA
+CNPJ: 11.222.333/0001-81
+Agência: 01234 Conta: 000123456789-0 23/02/2026 18:21:53
+Saldo anterior ao período solicitado R$ 1.000,00 C
+Extrato no período de 01/01/2026 à 31/01/2026
+Data
+Data Efetiva Documento Histórico Valor Saldo
+02/01/2026
+02/01 09:26
+324200 DEPOSITO DINHEIRO ATM R$ 478,00 R$ 1.478,00 C
+02/01/2026
+02/01 11:01
+021101 PIX RECEBIDOBanco Exemplo 12.345.678/0001-90 R$ 22,00 R$ 1.500,00 C
+02/01/2026 SALDO DIA R$ 1.500,00 C
+15/01/2026
+15/01 14:49
+151449
+PAG ORGAOS GOV IBC
+GOVERNO DO RN - GRI 24.519.654/0001-
+94
+-
+R$ 300,00 R$ 1.200,00 C
+30/01/2026
+30/01 16:08 301608 TAR PIX - R$ 8,50 R$ 1.191,50 C
+1
+"""
+
+
+def test_extrato_caixa():
+    assert ler_pdf_de_banco(EXTRATO_CAIXA, b"") is not None
+    t = ler_extrato_caixa(EXTRATO_CAIXA)
+    assert t["Conta"].iat[0] == "Caixa Ag 01234 Cc 000123456789-0"
+    assert len(t) == 4                                      # sem o saldo do dia
+    assert round(t["Valor"].sum(), 2) == 1191.50 - 1000.00  # saldo final - anterior
+    por = t.set_index("Descrição")
+    assert por.loc["DEPOSITO DINHEIRO ATM", "Valor"] == 478.00      # sem o documento
+    assert por.loc["PIX RECEBIDO - Banco Exemplo 12.345.678/0001-90", "Valor"] == 22.00
+    # O sinal vem da diferença de saldo; o CNPJ quebrado volta a ficar inteiro
+    assert por.loc["PAG ORGAOS GOV - IBC GOVERNO DO RN - GRI 24.519.654/0001-94",
+                   "Valor"] == -300.00
+    assert por.loc["TAR PIX", "Valor"] == -8.50
+
+
+# Extrato do BNB lido por OCR (dados fictícios), com os erros típicos: "0" lido como "2" no
+# saldo anterior e "105,00" lido como "195,00"
+EXTRATO_BNB_OCR = """Internet Banking BNB
+Titular: EMPRESA EXEMPLO LTDA
+Mês: Data de Emissão: 17/02/2026
+REFERENCIA: JANEI
+AGENCIA: 329 CONTA 1.234-5 - EMPRESA EXEMPLO LTDA
+> DEMONSTRATIVO DA MOVIMENTACAO DE CONTA CORRENTE
+DIA HISTORICO DOCUMENTO VALOR SALDO
+SALDO ANTERIOR 2,00 2,80
+15 TRANSF RECURSOS VIA TED 5620 1.000,00+ 1.000,00
+TARIFA PACOTE DE TARIFAS 8227 195,00- 895,00
+APLICACAO FUNDO BN 52639 5,00- 890,00
+21 DEBITO PRINCIPAL 200402 890,00- 2,00
+***NAO HOUVE MOVIMENTACAO NESTA CONTA NO MES DE REFERENCIA***.
+"""
+
+
+def test_extrato_bnb_corrige_o_ocr_pelos_saldos():
+    t = ler_extrato_bnb(EXTRATO_BNB_OCR)
+    assert t["Conta"].iat[0] == "BNB Ag 329 Cc 1.234-5"
+    assert t["Valor"].tolist() == [1000.00, -105.00, -5.00, -890.00]
+    assert t["Data"].tolist() == [pd.Timestamp("2026-01-15")] * 3 + [pd.Timestamp("2026-01-21")]

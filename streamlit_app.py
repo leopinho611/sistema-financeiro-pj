@@ -1348,7 +1348,9 @@ with corpo:
         if r["tipo"] == "transacoes":
             tabelas.append(r["dados"])
             leitura.append({"Arquivo": arquivo.name, "Conta": r["conta"],
-                            "Situação": f"✅ {len(r['dados'])} lançamentos"})
+                            "Situação": f"✅ {len(r['dados'])} lançamentos"
+                                        + (" · lido da imagem (OCR), confira os valores"
+                                           if r.get("ocr") else "")})
         else:
             layouts.setdefault(tuple(r["bruto"].columns), []).append(r)
 
