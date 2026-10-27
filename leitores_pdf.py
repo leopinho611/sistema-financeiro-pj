@@ -203,6 +203,10 @@ def _compras_do_cartao(itens, venc):
             continue  # pagamento da fatura anterior (já está na conta corrente)
         parcela = _PARCELA.search(descricao)
         data = venc if parcela else _data(dia, mes, venc.year, venc.month)
+        # Sem parcela, a compra é do mês da fatura. Data muito antiga é outra coisa (ex.: o
+        # desconto da anuidade traz a data de aniversário do cartão): entra no vencimento
+        if data < venc - pd.Timedelta(days=75):
+            data = venc
         lancamentos.append({"Data": data, "Descrição": descricao, "Valor": -valor})
     return lancamentos
 
@@ -381,6 +385,84 @@ def ler_fatura_sicoob(texto):
 
 
 # ============================================================================
+# SICOOB - extrato de conta corrente (Sicoobnet: Extrato, impresso do navegador)
+# ============================================================================
+# Cada lançamento começa com "dd/mm documento", tem o tipo ("PIX EMITIDO OUTRA IF") e o
+# complemento (quem recebeu, o que foi pago) nas linhas seguintes, e termina no valor com
+# C (crédito) ou D (débito). "SALDO DO DIA" não é lançamento
+_DATA_SICOOB = re.compile(r"^(\d{2})/(\d{2})(?![/\d])\s*(.*)$")
+_VALOR_CD = re.compile(r"R\$\s*([\d.]+,\d{2})([CD])\s*$")
+
+
+# Nome curto de cada tipo de lançamento (o começo como o normalizar deixa: sem acento,
+# pontuação nem maiúsculas). Fica antes do " - ", e o fornecedor sai do complemento depois
+TIPOS_SICOOB = [
+    ("pix emitido", "Pix enviado"), ("pix recebido", "Pix recebido"),
+    ("deb tit compe", "Boleto pago"), ("deb pagamento de boleto", "Boleto pago"),
+    ("cred ted", "TED recebida"), ("deb conv tributos", "Tributos federais"),
+    ("deb conv telecomunicacoes", "Débito automático telefonia"),
+    ("deb conv en eletrica", "Débito automático energia"), ("cheque pago", "Cheque pago"),
+    ("compra nacional debit", "Compra no débito"),
+    ("debito pacote servicos", "Tarifa pacote de serviços"),
+    ("deb parcelas subsc", "Cota capital da cooperativa"),
+]
+
+
+def _descricao_sicoob(partes):
+    """"Pix enviado - SERVICOS PLACA ..." a partir do tipo e do complemento."""
+    tipo, complemento = partes[0], " ".join(partes[1:])
+    complemento = re.sub(r"^(Pagamento|Recebimento) Pix\s*", "", complemento)
+    chave = normalizar(tipo)
+    curto = next((nome for comeco, nome in TIPOS_SICOOB if chave.startswith(comeco)), tipo)
+    return _limpa(f"{curto} - {complemento}" if complemento else curto)
+
+
+def eh_extrato_sicoob(texto):
+    return "EXTRATO DE CONTA CORRENTE" in texto and "SICOOB" in texto.upper() \
+        and "HISTÓRICO DE MOVIMENTAÇÃO" in texto
+
+
+def ler_extrato_sicoob(texto):
+    periodo = re.search(r"Periodo:\s*\d{2}/\d{2}/\d{4}\s*-\s*\d{2}/(\d{2})/(\d{4})", texto)
+    if not periodo:
+        raise ValueError("extrato sem período.")
+    mes_ref, ano_ref = int(periodo.group(1)), int(periodo.group(2))
+    numero = re.search(r"Conta:\s*([\d.]+-\d)", texto)
+    conta = f"Sicoob {numero.group(1)}" if numero else "Sicoob"
+    inicio = texto.find("HISTÓRICO DE MOVIMENTAÇÃO")
+    fim = texto.find("\nRESUMO", inicio)
+    lancamentos, atual = [], None
+    for linha in texto[inicio:fim if fim > 0 else None].splitlines():
+        linha = linha.strip()
+        # Cabeçalho e rodapé de cada página impressa
+        if not linha or linha.startswith(("Data Documento", "https://")) \
+                or re.match(r"\d{2}/\d{2}/\d{4},", linha):
+            continue
+        m = _DATA_SICOOB.match(linha)
+        if m:
+            atual = {"data": _data(m.group(1), m.group(2), ano_ref, mes_ref), "partes": []}
+            linha = m.group(3)
+            # O documento ("Pix", "362913286", "185.382", "41 - 16") não descreve o lançamento
+            if re.fullmatch(r"Pix|[\d.\s-]+", linha):
+                continue
+        if atual is None:
+            continue
+        valor = _VALOR_CD.search(linha)
+        if not valor:
+            atual["partes"].append(linha)
+            continue
+        if linha[:valor.start()].strip():
+            atual["partes"].append(linha[:valor.start()].strip())
+        descricao = _descricao_sicoob(atual["partes"]) if atual["partes"] else ""
+        if descricao and not descricao.upper().startswith("SALDO"):
+            v = converter_valor(valor.group(1))
+            lancamentos.append({"Data": atual["data"], "Descrição": descricao,
+                                "Valor": v if valor.group(2) == "C" else -v})
+        atual = None
+    return _tabela(lancamentos, conta)
+
+
+# ============================================================================
 # SANTANDER - extrato consolidado inteligente (PJ)
 # ============================================================================
 _LINHA_SANTANDER = re.compile(rf"^\s*(?:(\d{{2}})/(\d{{2}})\s+)?(.+?)\s+-?\s*({VALOR})"
@@ -511,6 +593,7 @@ LEITORES = [
     (eh_extrato_itau, ler_extrato_itau, True),
     (eh_fatura_itau, ler_fatura_itau, False),
     (eh_fatura_sicoob, ler_fatura_sicoob, False),
+    (eh_extrato_sicoob, ler_extrato_sicoob, False),
     (eh_extrato_santander, ler_extrato_santander, True),
 ]
 

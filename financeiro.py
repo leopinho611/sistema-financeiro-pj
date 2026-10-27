@@ -583,7 +583,8 @@ def nao_identificado(categoria, subcategoria):
 # ============================================================================
 # CNPJ E CNAE
 # ============================================================================
-_PADRAO_CNPJ = re.compile(r"\b(\d{2})\.?(\d{3})\.?(\d{3})/?(\d{4})-?(\d{2})\b")
+# A barra às vezes vem como espaço ("39.564.065 0001-03", no extrato do Sicoob)
+_PADRAO_CNPJ = re.compile(r"\b(\d{2})\.?(\d{3})\.?(\d{3})[/ ]?(\d{4})-?(\d{2})\b")
 
 # CNAE principal (Receita Federal) -> categoria e subcategoria. Casa pelo começo
 # do código: o mais específico vence ("4721102" antes de "4721").
@@ -1252,6 +1253,11 @@ def eh_extrato_pj(texto):
     ... R$ 1.195,98") nem com o número da cooperativa."""
     for linha in texto.splitlines()[:25]:
         linha = normalizar(linha)
+        # "Conta: 107.186-6 / EMPRESA EXEMPLO LTDA": o nome do titular vem depois do número
+        titular = re.match(r"^(conta|titular|cliente|razao social|nome)\b[\s:]*[\d\s.-]*"
+                           r"([a-z][^\d]*)$", linha)
+        if titular and _SINAIS_PJ.search(titular.group(2)):
+            return True
         if not re.search(r"\d", linha) and _SINAIS_PJ.search(linha):
             return True
     return False
@@ -1305,7 +1311,7 @@ def carregar_arquivo(nome, conteudo):
             raise ValueError("PDF sem texto (é imagem, ou foi impresso com o texto virado "
                              "desenho); envie o extrato em OFX, Excel ou o PDF gerado pelo banco.")
         raise ValueError("PDF não reconhecido (são lidos extratos de BB, Bradesco, Itaú, "
-                         "Santander, Nubank, Sicredi e XP, faturas de BB, Bradesco, Itaú e "
+                         "Santander, Nubank, Sicoob, Sicredi e XP, faturas de BB, Bradesco, Itaú e "
                          "Sicoob, e as aplicações desses bancos); envie o extrato em CSV, Excel "
                          "ou OFX.")
     # Planilha (CSV/Excel/texto); outros formatos (XML de nota fiscal, imagens...) não são

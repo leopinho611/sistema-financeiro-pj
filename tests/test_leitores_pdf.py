@@ -16,6 +16,7 @@ from leitores_pdf import (
     ler_fatura_bradesco,
     ler_fatura_itau,
     ler_fatura_sicoob,
+    ler_extrato_sicoob,
     ler_pdf_de_banco,
     eh_resumo_invest_facil,
     ler_resumo_invest_facil,
@@ -308,3 +309,59 @@ def test_boleto_da_fatura_sicoob_avisa_que_falta_o_detalhamento():
               "Site: www.sicoobcard.com.br\nFicha de compensação\n")
     with pytest.raises(SemLancamentos, match="Detalhamento"):
         ler_pdf_de_banco(boleto, b"")
+
+
+# Extrato de conta corrente do Sicoob (Sicoobnet, impresso do navegador), com dados fictícios
+EXTRATO_SICOOB = """SISTEMA DE COOPERATIVAS DE CRÉDITO DO BRASIL
+PLATAFORMA DE SERVIÇOS FINANCEIROS DO SICOOB - SISBR
+EXTRATO DE CONTA CORRENTE 12/05/2026 - 14:05:54
+Cooperativa: 1234-5 / SICOOB EXEMPLO
+Conta: 100.200-3 / EMPRESA EXEMPLO LTDA
+Periodo: 01/04/2026 - 30/04/2026
+HISTÓRICO DE MOVIMENTAÇÃO
+Data Documento Histórico Valor
+30/04 Pix
+ PIX EMITIDO OUTRA IF
+Pagamento Pix 12.345.678 0001-90 SERVICOS DE LIMPEZA LOJA 03
+R$ 130,00D
+30/04 362913286
+ CRÉD.TED-STR
+CLIENTE EXEMPLO SA 98.765.432 0001-10 CODIGO TED: T1
+R$ 1.000,00C
+30/04
+ SALDO DO DIA R$ 1.870,00C
+29/04 28147945
+ DÉB.TIT.COMPE EFETIVADO
+ALUGUEL SALA 401 MES 04 2026
+R$ 500,00D
+12/05/2026, 14:07 Sicoob | Internet Banking
+https://www.sicoob.com.br/sicoobnet/ib/#/home-extrato 1/2
+Data Documento Histórico Valor
+13/04 41 - 16
+ APLICAÇÃO RDC R$ 200,00D
+02/04 185.381
+ CHEQUE PAGO CAIXA R$ 300,00D
+31/03 SALDO BLOQUEADO ANTERIOR R$ 0,00*
+31/03
+ SALDO ANTERIOR R$ 2.000,00C
+RESUMO
+Saldo em conta: 1.870,00C
+"""
+
+
+def test_extrato_sicoob():
+    assert ler_pdf_de_banco(EXTRATO_SICOOB, b"") is not None
+    t = ler_extrato_sicoob(EXTRATO_SICOOB)
+    assert t["Conta"].iat[0] == "Sicoob 100.200-3"
+    assert len(t) == 5                                   # sem os saldos
+    assert round(t["Valor"].sum(), 2) == 1870.00 - 2000.00   # saldo final - anterior
+    por = t.set_index("Descrição")
+    assert por.loc["Pix enviado - 12.345.678 0001-90 SERVICOS DE LIMPEZA LOJA 03",
+                   "Valor"] == -130.00
+    assert por.loc["Pix enviado - 12.345.678 0001-90 SERVICOS DE LIMPEZA LOJA 03",
+                   "Fornecedor"] == "Servicos De Limpeza Loja"
+    assert por.loc["Boleto pago - ALUGUEL SALA 401 MES 04 2026", "Data"] == \
+        pd.Timestamp("2026-04-29")
+    assert por.loc["APLICAÇÃO RDC", "Valor"] == -200.00   # o documento "41 - 16" não entra
+    assert por.loc["Cheque pago", "Valor"] == -300.00
+    assert t.loc[t["Valor"] > 0, "Descrição"].str.startswith("TED recebida").all()

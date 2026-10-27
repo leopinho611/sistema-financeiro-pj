@@ -858,6 +858,14 @@ def test_extrato_de_empresa():
     from financeiro import eh_extrato_pj
     assert eh_extrato_pj("EXTRATO DE FATURA\nEMPRESA EXEMPLO LTDA\nConta Cartão: 123")
     assert eh_extrato_pj("Resumo da fatura\nCartão\nSicoob Mastercard Empresarial Pro\n")
+    # O nome do titular depois do número da conta
+    assert eh_extrato_pj("EXTRATO DE CONTA CORRENTE\nConta: 100.200-3 / EMPRESA EXEMPLO LTDA\n")
     # Pessoa física: o número da cooperativa e um pagamento a condomínio não contam
     assert not eh_extrato_pj("Dados da conta\nFULANO DE TAL\nCooperativa: 2207 Conta: 1-0\n"
                              "04/09 Pagamento para condominio exemplo -R$ 1.195,98")
+
+
+def test_cnpj_com_espaco_no_lugar_da_barra():
+    from financeiro import extrair_cnpj
+    assert extrair_cnpj("Pagamento Pix 12.345.678 0001-90 SERVICOS") == "12345678000190"
+    assert extrair_cnpj("Pagamento Pix ***.787.572-** FERIAS") is None   # CPF mascarado
