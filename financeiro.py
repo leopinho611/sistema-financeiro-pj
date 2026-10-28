@@ -218,16 +218,28 @@ def _nomes_unicos(nomes):
     return saida
 
 
-def ler_extrato(nome, conteudo):
-    """Lê CSV ou XLSX de qualquer banco e devolve um DataFrame com o cabeçalho certo."""
-    if nome.lower().endswith((".xlsx", ".xls", ".excel")) or conteudo[:2] == b"PK":
+_ASSINATURA_XLS = b"\xd0\xcf\x11\xe0"   # Excel antigo (.xls, 97-2003)
+
+
+def ler_planilha_bruta(nome, conteudo):
+    """Células de uma planilha Excel (.xlsx ou o .xls antigo), sem cabeçalho, ou None se o
+    arquivo não é Excel."""
+    if conteudo[:4] == _ASSINATURA_XLS:
+        return pd.read_excel(io.BytesIO(conteudo), header=None, dtype=object, engine="xlrd")
+    if conteudo[:2] == b"PK" or nome.lower().endswith((".xlsx", ".excel")):
         # O BB exporta XLSX com extensão ".excel"; XLSX sempre começa com "PK"
         with warnings.catch_warnings():
             # O Excel do BB não tem estilo padrão; o aviso do openpyxl é inofensivo
             warnings.simplefilter("ignore", UserWarning)
-            bruto = pd.read_excel(io.BytesIO(conteudo), header=None, dtype=object,
-                                  engine="openpyxl")
-    else:
+            return pd.read_excel(io.BytesIO(conteudo), header=None, dtype=object,
+                                 engine="openpyxl")
+    return None
+
+
+def ler_extrato(nome, conteudo):
+    """Lê CSV ou Excel de qualquer banco e devolve um DataFrame com o cabeçalho certo."""
+    bruto = ler_planilha_bruta(nome, conteudo)
+    if bruto is None:
         try:
             texto = conteudo.decode("utf-8-sig")
         except UnicodeDecodeError:
@@ -751,7 +763,7 @@ def eh_empresa(descricoes, contas):
 _PARTES_GENERICAS = ("transferencia", "pix", "ted", "doc", "pagamento", "pagto", "pgto",
                      "compra", "debito", "credito", "recebid", "enviad", "tarifa",
                      "cobranca", "boleto", "recebimento", "liquidacao", "deb pix",
-                     "devolucao pix", "pag orgaos")
+                     "devolucao pix", "pag orgaos", "sispag")
 # Prefixos de maquininha/intermediador: "MP*LOJA", "PG *LOJA", "DL*99 RIDE"
 _PREFIXO_INTERMEDIADOR = re.compile(r"^[A-Z0-9]{1,4}\s?\*\s*", re.IGNORECASE)
 
@@ -1300,6 +1312,89 @@ def _com_pj(texto, resultado):
     return resultado
 
 
+# ============================================================================
+# ITAÚ SISPAG - relatório de pagamentos (Consulta de pagamentos, exportado em Excel)
+# ============================================================================
+# No extrato do Itaú os pagamentos do SISPAG aparecem somados por dia ("Sispag
+# Fornecedores 6.300,00-"). O relatório do SISPAG traz cada pagamento desse total; quando
+# os pagamentos de um dia fecham com o SISPAG do extrato, o total dá lugar ao detalhe.
+def _celulas(bruto):
+    return [[normalizar(str(v)) if pd.notna(v) else "" for v in linha]
+            for linha in bruto.itertuples(index=False)]
+
+
+def eh_relatorio_sispag(bruto):
+    return any("favorecido beneficiario" in c and "data do pagamento" in " ".join(linha)
+               for linha in _celulas(bruto) for c in linha)
+
+
+def ler_sispag(bruto):
+    """Pagamentos efetuados do relatório do SISPAG (os agendados e cancelados ficam fora)."""
+    linhas = _celulas(bruto)
+    topo = next(i for i, l in enumerate(linhas) if any("favorecido beneficiario" in c
+                                                       for c in l))
+    cab = linhas[topo]
+    col = {nome: next(j for j, c in enumerate(cab) if c.startswith(nome))
+           for nome in ("favorecido", "cpf cnpj", "tipo de pagamento", "referencia",
+                        "data do pagamento", "valor", "status")}
+    conta = "Itaú"
+    for linha in bruto.iloc[:topo].itertuples(index=False):
+        textos = [str(v) for v in linha if pd.notna(v)]
+        m = re.search(r"(\d{3,5})\s*/\s*(\d+-\d)", " ".join(textos))
+        if m and "conta" in normalizar(" ".join(textos)):
+            conta = f"Itaú Ag {int(m.group(1))} Cc {m.group(2)}"
+            break
+    registros = []
+    for _, linha in bruto.iloc[topo + 1:].iterrows():
+        status = normalizar(str(linha.iloc[col["status"]]))
+        data = pd.to_datetime(str(linha.iloc[col["data do pagamento"]]), format="%d/%m/%Y",
+                              errors="coerce")
+        valor = converter_valor(linha.iloc[col["valor"]])
+        if status != "efetuado" or pd.isna(data) or not valor:
+            continue
+        partes = [str(linha.iloc[col[c]]).strip() for c in
+                  ("favorecido", "cpf cnpj", "tipo de pagamento", "referencia")]
+        # " - " separa as partes da descrição: no nome ("MK - MARKETING") vira espaço
+        partes = [re.sub(r"\s+-\s+", " ", p) for p in partes if p and p not in ("-", "nan")]
+        registros.append({"Data": data.strftime("%Y-%m-%d"),
+                          "Descrição": "SISPAG - " + " - ".join(partes),
+                          "Valor": -abs(valor)})
+    if not registros:
+        raise ValueError("relatório do SISPAG sem pagamentos efetuados.")
+    t = montar_transacoes(pd.DataFrame(registros), {"data": "Data", "descricao": ["Descrição"],
+                                                     "valor": "Valor"}, conta)
+    t["_sispag"] = True
+    return t
+
+
+def detalhar_sispag(t):
+    """Troca o SISPAG somado do extrato pelos pagamentos do relatório, dia a dia, quando
+    fecham ao centavo. Dia que não fecha fica com o total do extrato. Sem nenhum SISPAG nos
+    extratos, ficam os pagamentos do relatório.
+
+    O extrato pode ter outro nome de conta (planilha com o nome do arquivo): o dia procura o
+    SISPAG em qualquer conta, primeiro na do relatório, e o detalhe passa para essa conta."""
+    if "_sispag" not in t or not t["_sispag"].fillna(False).astype(bool).any():
+        return t.drop(columns="_sispag", errors="ignore")
+    eh_det = t["_sispag"].fillna(False).astype(bool)
+    det, resto = t[eh_det], t[~eh_det]
+    agregado = resto[resto["Descrição"].map(normalizar).str.contains("sispag")
+                     & (resto["Valor"] < 0)]
+    if agregado.empty:
+        return t.drop(columns="_sispag")
+    manter, tirar = [], []
+    for (conta, data), dia in det.groupby(["Conta", "Data"]):
+        candidatos = agregado[(agregado["Data"] == data) & ~agregado.index.isin(tirar)]
+        contas = sorted(candidatos["Conta"].unique(), key=lambda c: c != conta)
+        for outra in contas:
+            do_dia = candidatos[candidatos["Conta"] == outra]
+            if abs(do_dia["Valor"].sum() - dia["Valor"].sum()) < 0.01:
+                manter.append(dia.assign(Conta=outra))
+                tirar += list(do_dia.index)
+                break
+    return pd.concat([resto.drop(index=tirar)] + manter, ignore_index=True).drop(columns="_sispag")
+
+
 def carregar_arquivo(nome, conteudo):
     """Lê um arquivo enviado.
 
@@ -1360,6 +1455,11 @@ def carregar_arquivo(nome, conteudo):
             raise ValueError("XML (nota fiscal?) não é extrato bancário; envie o extrato em "
                              "CSV, Excel, OFX ou PDF.")
         raise ValueError(f"formato .{ext} não é lido; envie o extrato em CSV, Excel, OFX ou PDF.")
+    planilha = ler_planilha_bruta(nome, conteudo)
+    if planilha is not None and eh_relatorio_sispag(planilha):
+        dados = ler_sispag(planilha)
+        return {"tipo": "transacoes", "dados": dados, "conta": dados["Conta"].iat[0],
+                "pj": True}
     bruto = ler_extrato(nome, conteudo)
     return {"tipo": "tabela", "bruto": bruto, "conta": identificar_conta(nome, bruto.columns)}
 
@@ -1419,10 +1519,17 @@ def consolidar(tabelas, nome_titular=""):
     # então a chave ignora a descrição (que muda de formato para formato). Mantém, para
     # cada lançamento, a maior quantidade vista num mesmo arquivo, e a versão do
     # primeiro arquivo (a tela manda CSV/Excel primeiro, que tem a melhor descrição).
+    # Os pagamentos do relatório do SISPAG ficam fora dessa conta: são o detalhe de um
+    # lançamento do extrato, não uma cópia
+    eh_sispag = t["_sispag"].fillna(False).astype(bool) if "_sispag" in t \
+        else pd.Series(False, index=t.index)
+    sispag, t = t[eh_sispag], t[~eh_sispag]
     chave = ["Conta", "Data", "Valor"]
     t["_ocorrencia"] = t.groupby(chave + ["_arquivo"]).cumcount()
     t = t.drop_duplicates(subset=chave + ["_ocorrencia"]).drop(columns=["_arquivo", "_ocorrencia"])
-    t = t.reset_index(drop=True)
+    sispag = sispag.drop_duplicates(subset=["Conta", "Data", "Valor", "Descrição"]) \
+        .drop(columns="_arquivo")
+    t = detalhar_sispag(pd.concat([t, sispag], ignore_index=True)).reset_index(drop=True)
 
     if not t["Conta"].str.contains("Cartão").any():
         fatura = t["Categoria"] == CATEGORIA_FATURA
