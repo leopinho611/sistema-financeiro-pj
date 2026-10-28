@@ -463,6 +463,199 @@ def ler_extrato_sicoob(texto):
 
 
 # ============================================================================
+# CAIXA - extrato de conta (Internet Banking CAIXA, com data efetiva e saldo a cada linha)
+# ============================================================================
+# Cada lançamento: "dd/mm/aaaa" (data contábil), "dd/mm hh:mm documento histórico" e, às
+# vezes, mais linhas de histórico, até "R$ valor R$ saldo C". O débito tem um "-" solto antes
+# do valor; o sinal é tirado da diferença de saldo, que também confere o valor
+_VALOR_SALDO_CAIXA = re.compile(r"R\$\s*([\d.]+,\d{2})\s+R\$\s*([\d.]+,\d{2})\s*([CD])\s*$")
+_HISTORICOS_CAIXA = ("PIX RECEBIDO", "PIX ENVIADO", "RECEBIMENTO TED", "DEB PIX CHAVE",
+                     "ENVIO TED", "PAG BOLETO", "PAG ORGAOS GOV")
+
+
+def eh_extrato_caixa(texto):
+    return "Data Efetiva Documento Histórico Valor Saldo" in texto \
+        and "Saldo anterior ao período solicitado" in texto
+
+
+def _saldo_caixa(valor, sinal):
+    v = converter_valor(valor)
+    return -v if sinal == "D" else v
+
+
+def _descricao_caixa(partes):
+    """"PIX RECEBIDO - Banco VR 78.626.983/0001-63" (histórico - de quem/para quem)."""
+    texto = " ".join(partes)
+    texto = re.sub(r"(/\d{4}-) (\d{2})\b", r"\1\2", texto)       # CNPJ quebrado na linha
+    texto = re.sub(r"\s+-$", "", texto).strip()                     # o "-" do débito
+    for historico in _HISTORICOS_CAIXA:
+        if texto.startswith(historico):
+            resto = texto[len(historico):].strip()
+            return f"{historico} - {resto}" if resto else historico
+    if len(partes) > 1:
+        return f"{partes[0]} - {' '.join(partes[1:])}".strip(" -")
+    return texto
+
+
+def ler_extrato_caixa(texto):
+    c = re.search(r"Agência:\s*(\d+)\s+Conta:\s*([\d-]+)", texto)
+    conta = f"Caixa Ag {c.group(1)} Cc {c.group(2)}" if c else "Caixa"
+    anterior = re.search(r"Saldo anterior ao período solicitado\s*R\$\s*([\d.]+,\d{2})\s*([CD])",
+                         texto)
+    saldo = _saldo_caixa(*anterior.groups()) if anterior else None
+    lancamentos, data, partes = [], None, []
+    for linha in texto.splitlines():
+        linha = linha.strip()
+        # Fim do CNPJ que quebrou de linha ("24.519.654/0001-" + "94")
+        if partes and re.search(r"/\d{4}-$", partes[-1]) and re.fullmatch(r"\d{2}", linha):
+            partes[-1] += linha
+            continue
+        if not linha or linha == "Data" or linha.startswith("Data Efetiva") \
+                or re.fullmatch(r"\d{1,6}", linha):      # página e documento sozinhos
+            continue
+        m = re.match(r"^(\d{2}/\d{2}/\d{4})(.*)$", linha)
+        if m:
+            if "SALDO DIA" in m.group(2):
+                continue
+            data, partes = pd.to_datetime(m.group(1), format="%d/%m/%Y"), []
+            continue
+        if data is None:
+            continue
+        # "dd/mm hh:mm [documento] [histórico]": data efetiva e documento não descrevem
+        linha = re.sub(r"^\d{2}/\d{2}\s+\d{2}:\d{2}\s*", "", linha)
+        linha = re.sub(r"^\d{6}(\s+|$)", "", linha)
+        if not linha:
+            continue
+        v = _VALOR_SALDO_CAIXA.search(linha)
+        if not v:
+            if linha and linha != "-":
+                partes.append(linha)
+            continue
+        if linha[:v.start()].strip():
+            partes.append(linha[:v.start()].strip())
+        impresso = converter_valor(v.group(1))
+        novo_saldo = _saldo_caixa(v.group(2), v.group(3))
+        valor = round(novo_saldo - saldo, 2) if saldo is not None else None
+        if valor is None or abs(abs(valor) - impresso) > 0.01:
+            valor = -impresso if partes and partes[-1].endswith("-") else impresso
+        saldo = novo_saldo
+        lancamentos.append({"Data": data, "Descrição": _descricao_caixa(partes), "Valor": valor})
+        data, partes = None, []
+    return _tabela(lancamentos, conta)
+
+
+# ============================================================================
+# BNB - extrato consolidado (Internet Banking BNB). Costuma chegar sem texto (as letras
+# viram desenho na impressão) e ser lido por OCR, que às vezes troca dígitos (0 por 9, 2
+# ou 8). Cada linha traz o saldo, e a sequência dos saldos corrige os valores
+# ============================================================================
+_LINHA_BNB = re.compile(r"^(?:(\d{1,2})\s+)?(.+?)\s+(\d+)\s+([\d.]+,\d{2})\s*([+-])\s+"
+                        r"([\d.]+,\d{2})$")
+_MESES_EXTENSO = {"jan": 1, "fev": 2, "mar": 3, "abr": 4, "mai": 5, "jun": 6, "jul": 7,
+                  "ago": 8, "set": 9, "out": 10, "nov": 11, "dez": 12}
+
+
+def eh_extrato_bnb(texto):
+    return "BNB" in texto and "DEMONSTRATIVO DA MOVIMENTACAO DE CONTA CORRENTE" in texto
+
+
+def _corrigir_pelos_saldos(itens, saldo_anterior):
+    """itens: [(valor com sinal, saldo)] lidos por OCR, que pode ter errado qualquer um.
+    Escolhe a sequência de saldos que muda o menor número de números lidos (cada linha tem
+    que fechar: saldo anterior + valor = saldo) e devolve [(valor, saldo)] corrigidos."""
+    def c(x):
+        return round(x, 2)
+
+    if not itens:
+        return []
+    # Estados: saldo -> (custo, saldos escolhidos até aqui)
+    primeiro = c(itens[0][1] - itens[0][0])
+    estados = {primeiro: (0 if saldo_anterior in (None, primeiro) else 1, [primeiro])}
+    if saldo_anterior is not None and c(saldo_anterior) != primeiro:
+        estados[c(saldo_anterior)] = (0, [c(saldo_anterior)])
+    for valor, saldo in itens:
+        novos = {}
+        for anterior, (custo, caminho, *_) in estados.items():
+            # Ou o saldo lido está certo, ou o saldo é o anterior + o valor lido
+            for x in {c(saldo), c(anterior + valor)}:
+                extra = (x != c(saldo)) + (c(x - anterior) != c(valor))
+                # Empate: prefere o saldo que fecha com o valor lido
+                chave = (custo + extra, x != c(anterior + valor))
+                if x not in novos or chave < novos[x][0]:
+                    novos[x] = (chave, caminho + [x])
+        estados = {x: (chave[0], caminho, chave[1]) for x, (chave, caminho) in novos.items()}
+    _, caminho, _ = min(estados.values(), key=lambda e: (e[0], e[2]))
+    return [(c(caminho[i + 1] - caminho[i]), caminho[i + 1]) for i in range(len(itens))]
+
+
+def ler_extrato_bnb(texto):
+    emissao = re.search(r"Data de Emiss[aã]o:\s*\d{2}/(\d{2})/(\d{4})", texto)
+    referencia = re.search(r"REFERENCIA:\s*([A-Za-zÇç]{3})", texto)
+    if not (emissao and referencia):
+        raise ValueError("extrato BNB sem o mês de referência.")
+    mes = _MESES_EXTENSO.get(normalizar(referencia.group(1))[:3])
+    ano = int(emissao.group(2)) - (1 if mes > int(emissao.group(1)) else 0)
+    lancamentos, conta, dentro, dia = [], "BNB", False, None
+    itens, linhas = [], []
+
+    def fechar():
+        for (valor, _), (d, descricao) in zip(_corrigir_pelos_saldos(itens, anterior), linhas):
+            lancamentos.append({"Data": pd.Timestamp(ano, mes, d), "Descrição": descricao,
+                                "Valor": valor, "Conta": conta})
+        itens.clear()
+        linhas.clear()
+
+    anterior = None
+    for linha in texto.splitlines():
+        linha = linha.strip()
+        c = re.search(r"AGENCIA:\s*(\d+)\s+CONTA\s+([\d.]+-\d)", linha)
+        if c:
+            fechar()
+            conta, dentro = f"BNB Ag {c.group(1)} Cc {c.group(2)}", False
+            continue
+        if "DEMONSTRATIVO DA MOVIMENTACAO DE CONTA CORRENTE" in linha:
+            fechar()
+            dentro, dia, anterior = True, None, None
+            continue
+        if not dentro:
+            continue
+        if linha.startswith((">", "***")):
+            fechar()
+            dentro = False
+            continue
+        s = re.match(r"SALDO ANTERIOR\s+[\d.]+,\d{2}\s+([\d.]+,\d{2})", linha)
+        if s:
+            anterior = converter_valor(s.group(1))
+            continue
+        m = _LINHA_BNB.match(linha)
+        if not m:
+            continue
+        if m.group(1):
+            dia = int(m.group(1))
+        valor = converter_valor(m.group(4)) * (1 if m.group(5) == "+" else -1)
+        itens.append((valor, converter_valor(m.group(6))))
+        linhas.append((dia or 1, _limpa(m.group(2))))
+    fechar()
+    if not lancamentos:
+        raise SemLancamentos(conta, "nenhum lançamento no período")
+    tabelas = []
+    for nome, grupo in pd.DataFrame(lancamentos).groupby("Conta", sort=False):
+        tabelas.append(_tabela(grupo.drop(columns="Conta").to_dict("records"), nome))
+    return _juntar(*tabelas)
+
+
+LEITORES_OCR = [(eh_extrato_bnb, ler_extrato_bnb)]
+
+
+def ler_texto_ocr(texto):
+    """Tabela de transações do texto lido por OCR, ou None se o layout não é conhecido."""
+    for reconhece, ler in LEITORES_OCR:
+        if reconhece(texto):
+            return ler(texto)
+    return None
+
+
+# ============================================================================
 # SANTANDER - extrato consolidado inteligente (PJ)
 # ============================================================================
 _LINHA_SANTANDER = re.compile(rf"^\s*(?:(\d{{2}})/(\d{{2}})\s+)?(.+?)\s+-?\s*({VALOR})"
@@ -594,6 +787,7 @@ LEITORES = [
     (eh_fatura_itau, ler_fatura_itau, False),
     (eh_fatura_sicoob, ler_fatura_sicoob, False),
     (eh_extrato_sicoob, ler_extrato_sicoob, False),
+    (eh_extrato_caixa, ler_extrato_caixa, False),
     (eh_extrato_santander, ler_extrato_santander, True),
 ]
 
