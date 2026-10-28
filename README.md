@@ -111,6 +111,15 @@ Sem o token, as regras novas valem até o app reiniciar.
 🌐 Usando Online
 Acesse diretamente em:
 https://sistema-financeiro-pj-cfzvrv3ryghyyfppncz97u.streamlit.app/
+
+🚀 Hospedar no Render (uso comercial)
+O repositório tem um `Dockerfile` (com o OCR do tesseract) e o `iniciar.sh`.
+1. Render → New → Web Service → conecte este repositório, branch `main`. O Render detecta o
+   Dockerfile (Language: Docker). Plano Starter ou acima (o gratuito dorme sem uso).
+2. Environment → Secret Files → arquivo `secrets.toml` com o mesmo conteúdo dos Secrets do
+   Streamlit Cloud, mais `ENDERECO_APP = "https://seu-dominio/"` (link do botão Compartilhar).
+3. Settings → Custom Domains → acrescente o domínio e copie os registros DNS para o
+   Registro.br. O https é ativado sozinho.
 📱 Como Usar
 Exporte seu extrato bancário em CSV ou XLSX
 Qualquer banco (Itaú, Bradesco, Santander, Caixa, etc)
