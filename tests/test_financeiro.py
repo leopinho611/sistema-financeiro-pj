@@ -869,3 +869,69 @@ def test_cnpj_com_espaco_no_lugar_da_barra():
     from financeiro import extrair_cnpj
     assert extrair_cnpj("Pagamento Pix 12.345.678 0001-90 SERVICOS") == "12345678000190"
     assert extrair_cnpj("Pagamento Pix ***.787.572-** FERIAS") is None   # CPF mascarado
+
+
+def _relatorio_sispag():
+    """Relatório do SISPAG (Itaú) como sai do Excel, com dados fictícios."""
+    vazio = [None] * 7
+    linhas = [vazio, ["Dados da conta"] + [None] * 6,
+              ["Agência/conta", "1111 / 22222-2", None, "Nome da empresa:", "EMPRESA EXEMPLO",
+               None, None],
+              ["CNPJ:", "11.222.333/0001-81"] + [None] * 5, vazio,
+              ["favorecido / beneficiário", "CPF/CNPJ", "tipo de pagamento",
+               "referência da empresa", "data do pagamento", "valor (R$)", "status"],
+              ["FORNECEDOR A - ME", "12.345.678/0001-90", "Boleto outros bancos", "-",
+               "02/01/2026", 4000.0, "Efetuado"],
+              ["FORNECEDOR B LTDA", "98.765.432/0001-10", "PIX Transferências", "-",
+               "02/01/2026", 2300.0, "Efetuado"],
+              ["RECEITA FED-DARF NUMERADO-CB", "-", "DARF código de barras", "PIS 12.2025",
+               "05/01/2026", 500.0, "Efetuado"],
+              ["FORNECEDOR C LTDA", "11.111.111/0001-11", "Boleto Itaú", "-",
+               "06/01/2026", 900.0, "Agendado"],
+              vazio, ["Total:", None, None, None, None, 7700.0, None]]
+    return pd.DataFrame(linhas, dtype=object)
+
+
+def test_relatorio_sispag():
+    from financeiro import eh_relatorio_sispag, ler_sispag
+    bruto = _relatorio_sispag()
+    assert eh_relatorio_sispag(bruto)
+    t = ler_sispag(bruto)
+    assert t["Conta"].iat[0] == "Itaú Ag 1111 Cc 22222-2"     # a mesma do extrato
+    assert len(t) == 3                                         # sem o agendado
+    assert round(t["Valor"].sum(), 2) == -6800.00
+    assert t["Fornecedor"].iat[0] == "Fornecedor A Me"         # " - " do nome não corta
+    assert t["Descrição"].str.contains("12.345.678/0001-90").any()   # CNPJ para a Receita
+
+
+def test_sispag_detalha_o_total_do_extrato():
+    from financeiro import consolidar, ler_sispag
+    extrato = montar_transacoes(pd.DataFrame({
+        "Data": ["2026-01-02", "2026-01-02", "2026-01-05"],
+        "Descrição": ["Sispag Fornecedores", "Padaria Exemplo", "Sispag Tributos"],
+        "Valor": [-6300.00, -20.00, -450.00]}),
+        {"data": "Data", "descricao": ["Descrição"], "valor": "Valor"}, "Itaú Ag 1111 Cc 22222-2")
+    t = consolidar([extrato, ler_sispag(_relatorio_sispag())])
+    # 02/01 fecha (4.000 + 2.300 = 6.300): o total dá lugar aos dois pagamentos
+    dia2 = t[t["Data"] == pd.Timestamp("2026-01-02")]
+    assert sorted(dia2["Valor"]) == [-4000.00, -2300.00, -20.00]
+    # 05/01 não fecha (500 no relatório, 450 no extrato): fica o extrato, sem contar duas vezes
+    dia5 = t[t["Data"] == pd.Timestamp("2026-01-05")]
+    assert dia5["Valor"].tolist() == [-450.00]
+    assert "_sispag" not in t
+
+
+def test_sispag_sem_extrato_fica_com_os_pagamentos():
+    from financeiro import consolidar, ler_sispag
+    t = consolidar([ler_sispag(_relatorio_sispag())])
+    assert len(t) == 3
+
+
+def test_sispag_acha_o_extrato_com_outro_nome_de_conta():
+    from financeiro import consolidar, ler_sispag
+    extrato = montar_transacoes(pd.DataFrame({
+        "Data": ["2026-01-02"], "Descrição": ["SISPAG FORNECEDORES"], "Valor": [-6300.00]}),
+        {"data": "Data", "descricao": ["Descrição"], "valor": "Valor"}, "ITAU - EXTRATO - 01")
+    t = consolidar([extrato, ler_sispag(_relatorio_sispag())])
+    assert sorted(t["Valor"]) == [-4000.00, -2300.00]          # o 05/01 não tem par: sai
+    assert set(t["Conta"]) == {"ITAU - EXTRATO - 01"}         # o detalhe vai para a conta do extrato

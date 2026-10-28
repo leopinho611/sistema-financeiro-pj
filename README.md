@@ -6,6 +6,7 @@ Um aplicativo web que automatiza a categorização de extratos bancários e gera
 ✅ OFX de qualquer banco e extratos em PDF do Nubank, Sicredi e Banco XP (o nome do titular é lido do PDF) - O mesmo mês em mais de um formato (CSV, OFX, PDF) não duplica  
 ✅ Fatura do cartão BB em PDF - Lê as compras, parcelas e estornos  
 ✅ Extratos em PDF de BB, Bradesco, Itaú, Santander, Sicoob, Caixa e BNB, faturas Bradesco, Itaú e Sicoob empresariais e as aplicações desses bancos (aplicação automática Itaú, Invest Fácil, CDB ContaMax)  
+✅ Itaú SISPAG - O relatório de pagamentos (Excel) detalha o "Sispag" do extrato: quando os pagamentos do dia fecham com o total do extrato, o total dá lugar a cada pagamento (favorecido, CNPJ e tipo)  
 ✅ PDF sem texto (escaneado, ou com as letras viradas desenho na impressão) - Lido por OCR quando o layout é conhecido (hoje o BNB), com os valores conferidos pelo saldo de cada linha. No Streamlit Cloud, o OCR vem do `packages.txt` (tesseract e poppler)  
 ✅ Movimentações internas - Aplicação/resgate automático (BB Rende Fácil, caixinhas Nubank), transferência entre suas contas e pagamento de fatura não contam como entrada nem saída  
 ✅ Identificação automática das colunas - Data, descrição, valor ou crédito/débito (ajustável na tela)  
