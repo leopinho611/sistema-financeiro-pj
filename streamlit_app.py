@@ -381,7 +381,13 @@ st.markdown(f"""
 
 # Cabeçalho com o botão de compartilhar: no celular abre a janela de compartilhar do aparelho
 # (WhatsApp, e-mail...); no computador, copia o link
-ENDERECO_APP = "https://sistema-financeiro-pj-cfzvrv3ryghyyfppncz97u.streamlit.app/"
+# O endereço público vem do segredo ENDERECO_APP (ex.: o domínio próprio); sem ele, o do
+# Streamlit Community Cloud
+try:
+    ENDERECO_APP = st.secrets.get("ENDERECO_APP")
+except Exception:  # noqa: BLE001 - sem secrets.toml
+    ENDERECO_APP = None
+ENDERECO_APP = ENDERECO_APP or "https://sistema-financeiro-pj-cfzvrv3ryghyyfppncz97u.streamlit.app/"
 TEXTO_COMPARTILHAR = ("Suas Contas em Dia: envie o extrato do banco e veja para onde vai o seu "
                       "dinheiro, em segundos. Grátis e sem guardar seus dados.")
 st.html(f"""
