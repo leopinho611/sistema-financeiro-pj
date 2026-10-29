@@ -831,7 +831,10 @@ def cnpjs_pendentes(t, regras):
     """Fornecedores de saída sem categoria (ou só "transferência") que ainda não têm regra e
     trazem CNPJ na descrição: [chave, CNPJ, Fornecedor]."""
     s = t[t["Tipo"] == "Saída"]
-    s = s.assign(chave=s["FornecedorOriginal"].map(chave_fornecedor),
+    if s.empty:   # nenhum extrato lido, ou só entradas
+        return pd.DataFrame(columns=["chave", "CNPJ", "Fornecedor"])
+    fornecedor = s["FornecedorOriginal"] if "FornecedorOriginal" in s else s["Fornecedor"]
+    s = s.assign(chave=fornecedor.map(chave_fornecedor),
                  CNPJ=s["Descrição"].map(extrair_cnpj))
     pendente = pd.Series([c == "TRANSFERÊNCIA" or nao_identificado(c, sc) for c, sc in
                           zip(s["Categoria"], s["Subcategoria"])], index=s.index, dtype=bool)
