@@ -1336,12 +1336,18 @@ with corpo:
             expandidos.append(arquivo)
     arquivos = sorted(expandidos,
                       key=lambda a: ORDEM_FORMATO.get(a.name.lower().rsplit(".", 1)[-1], 3))
+    def ler_com_aviso(nome, conteudo):
+        # Só aparece na primeira leitura (depois vem da memória da sessão). O PDF em imagem
+        # passa pelo OCR, que leva de segundos a alguns minutos conforme o servidor
+        with st.spinner(f"Lendo {nome}… (PDF em imagem pode levar até alguns minutos)"):
+            return carregar_arquivo(nome, conteudo)
+
     for arquivo in arquivos:
         try:
             conteudo = arquivo.getvalue()
             id_arquivo = impressao(arquivo.name, conteudo)
             r = na_sessao("arquivo", id_arquivo,
-                          lambda: carregar_arquivo(arquivo.name, conteudo), guardar=400)
+                          lambda: ler_com_aviso(arquivo.name, conteudo), guardar=400)
             r["id"] = id_arquivo
             ids_lidos.append(id_arquivo)
         except SemLancamentos as e:

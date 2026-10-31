@@ -1261,7 +1261,9 @@ MAX_PAGINAS_OCR = 20
 
 def texto_por_ocr(conteudo):
     """Texto de um PDF sem texto, pelo OCR (tesseract, em português). Precisa dos programas
-    pdftoppm e tesseract no servidor (packages.txt); sem eles, devolve None."""
+    pdftoppm e tesseract no servidor (packages.txt/Dockerfile); sem eles, devolve None.
+    Num núcleo inteiro, 3 páginas levam ~16 s; num servidor fraco (fração de núcleo), alguns
+    minutos: por isso o tempo limite é largo."""
     if not (shutil.which("pdftoppm") and shutil.which("tesseract")):
         return None
     with tempfile.TemporaryDirectory() as pasta:
@@ -1271,11 +1273,11 @@ def texto_por_ocr(conteudo):
         try:
             subprocess.run(["pdftoppm", "-r", "300", "-gray", "-png", "-l",
                             str(MAX_PAGINAS_OCR), pdf, os.path.join(pasta, "p")],
-                           check=True, capture_output=True, timeout=120)
+                           check=True, capture_output=True, timeout=300)
             paginas = sorted(f for f in os.listdir(pasta) if f.endswith(".png"))
             textos = [subprocess.run(["tesseract", os.path.join(pasta, p), "-", "-l", "por",
                                       "--psm", "6"], check=True, capture_output=True,
-                                     timeout=120).stdout.decode("utf-8", "ignore")
+                                     timeout=300).stdout.decode("utf-8", "ignore")
                       for p in paginas]
         except (subprocess.SubprocessError, OSError):
             return None
