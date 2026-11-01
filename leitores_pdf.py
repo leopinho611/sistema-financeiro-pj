@@ -647,6 +647,11 @@ def ler_extrato_bnb(texto):
 LEITORES_OCR = [(eh_extrato_bnb, ler_extrato_bnb)]
 
 
+def layout_ocr_conhecido(texto):
+    """A 1ª página lida por OCR é de um layout que sabemos ler?"""
+    return any(reconhece(texto) for reconhece, _ in LEITORES_OCR)
+
+
 def ler_texto_ocr(texto):
     """Tabela de transações do texto lido por OCR, ou None se o layout não é conhecido."""
     for reconhece, ler in LEITORES_OCR:

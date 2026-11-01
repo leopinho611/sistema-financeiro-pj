@@ -437,3 +437,10 @@ def test_extrato_bnb_corrige_o_ocr_pelos_saldos():
     assert t["Conta"].iat[0] == "BNB Ag 329 Cc 1.234-5"
     assert t["Valor"].tolist() == [1000.00, -105.00, -5.00, -890.00]
     assert t["Data"].tolist() == [pd.Timestamp("2026-01-15")] * 3 + [pd.Timestamp("2026-01-21")]
+
+
+def test_layout_ocr_conhecido_pela_primeira_pagina():
+    from leitores_pdf import layout_ocr_conhecido
+    assert layout_ocr_conhecido(EXTRATO_BNB_OCR)
+    # PDF em imagem de outro formato: o OCR para na 1ª página
+    assert not layout_ocr_conhecido("RECIBO DE PAGAMENTO\nValor R$ 100,00")
