@@ -173,12 +173,13 @@ create table eventos (
 create index eventos_momento on eventos (momento);
 alter table eventos enable row level security;   -- sem políticas: só a chave do servidor acessa
 ```
-2. **Project Settings → API**: copie a *Project URL* e a chave **service_role** (secreta: fica
-   só nos segredos do servidor, nunca no navegador).
+2. Botão **Connect** (ou **Project Settings → API Keys**): copie a *Project URL* e a chave
+   secreta, `sb_secret_...` (ou, em projetos antigos, a **service_role** `eyJ...`). Ela é
+   secreta: fica só nos segredos do servidor, nunca no navegador.
 3. Nos segredos do app (Render → Secret Files `secrets.toml`, ou Streamlit Cloud → Secrets):
 ```
 SUPABASE_URL = "https://xxxx.supabase.co"
-SUPABASE_CHAVE = "eyJ..."     # service_role
+SUPABASE_CHAVE = "sb_secret_..."   # ou a service_role "eyJ..."; SUPABASE_SECRET_KEY também vale
 CLARITY_ID = ""               # opcional, veja abaixo
 ```
 Nos links de divulgação, acrescente a origem: `https://suascontasemdia.com.br/?utm_source=instagram`

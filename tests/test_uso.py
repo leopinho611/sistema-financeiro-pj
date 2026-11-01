@@ -162,3 +162,8 @@ def test_sem_eventos():
     assert uso.resumo_sessoes(ev).empty
     assert uso.erros_de_leitura(ev).empty
     assert uso.funil(uso.resumo_sessoes(ev))["Visitas"].sum() == 0
+
+
+def test_cabecalhos_chave_antiga_e_nova():
+    assert uso._cabecalhos("eyJabc") == {"apikey": "eyJabc", "Authorization": "Bearer eyJabc"}
+    assert uso._cabecalhos("sb_secret_x") == {"apikey": "sb_secret_x"}
