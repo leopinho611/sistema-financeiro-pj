@@ -93,7 +93,11 @@ PALAVRAS_APLICACAO = ["rende facil", "rdb", "nu reserva", "valor mensal programa
                       "caixinha", "poupanca", "aplicacao", "resgate", "fii", "acao",
                       "acoes", "tesouro", "cdb", "lci", "lca", "corretora", "bitcoin",
                       "conta investimento", "sicredinvest", "capital subscrito",
-                      "integralizacao de capital"]
+                      "integralizacao de capital",
+                      # Itaú ("Apl Aplic Aut Mais", "Res Aplic Aut Mais") e Bradesco
+                      # ("Aplic.invest Facil", "Resg.invest Facil")
+                      # (só a palavra "aplic": "aplic*" pegaria "aplicativo")
+                      "aplic", "resg", "invest facil"]
 PALAVRAS_FATURA = ["pagto cartao", "pagamento de fatura", "pagamento fatura",
                    "pgto fatura", "fatura do cartao", "fatura cartao"]
 PADRAO_TRANSFERENCIA = re.compile(r"\b(?:pix|ted|doc|transf|transferencia)")
@@ -156,7 +160,9 @@ def categorizar(descricao, valor=None, padrao=CATEGORIA_PADRAO):
     devolve `padrao`.
     """
     texto = normalizar(sem_dados_bancarios(descricao)).replace("mercado livre", "mercadolivre")
-    if _PADRAO_APLICACAO.search(texto):
+    # O rendimento da aplicação ("Rend Pago Aplic Aut Mais") é dinheiro novo: fica como
+    # entrada (Rendimentos), não como movimentação interna
+    if _PADRAO_APLICACAO.search(texto) and not texto.startswith("rend"):
         return CATEGORIA_APLICACAO
     if _PADRAO_FATURA.search(texto):
         return CATEGORIA_FATURA
@@ -537,7 +543,7 @@ SUBCATEGORIA_OUTROS = "Outros"
 # Tipos de entrada reconhecidos pelas palavras; o resto é separado por quem pagou
 TIPOS_ENTRADA = {
     "Salário": ["salario", "folha", "proventos", "pro labore", "prolabore", "vencimentos"],
-    "Rendimentos": ["rendimento*", "dividendo*", "juros sobre capital", "jcp", "cupom",
+    "Rendimentos": ["rendimento*", "rend pago", "dividendo*", "juros sobre capital", "jcp", "cupom",
                     "distribuicao resultados", "distribuicao de sobras"],
     "Estornos e reembolsos": ["estorno*", "reembolso*", "devolucao", "cashback"],
 }
