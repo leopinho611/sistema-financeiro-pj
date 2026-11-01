@@ -962,7 +962,7 @@ PRECO_PLUS = ler_segredo("PLUS_PRECO")   # opcional, só para mostrar ("R$ 19,90
 PRAZO_RESPOSTA = "Respondemos em até 1 dia útil."
 # Medição de uso (anônima): eventos vão para o Supabase; sem os segredos, só para a memória
 USO_URL = ler_segredo("SUPABASE_URL")
-USO_CHAVE = ler_segredo("SUPABASE_CHAVE")
+USO_CHAVE = ler_segredo("SUPABASE_CHAVE") or ler_segredo("SUPABASE_SECRET_KEY")
 CLARITY_ID = ler_segredo("CLARITY_ID")   # opcional: gravação de sessão (texto mascarado)
 
 

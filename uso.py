@@ -181,12 +181,21 @@ class Registro:
             self.anotar("ativo")
 
 
+def _cabecalhos(chave):
+    """A chave antiga (service_role, um JWT "eyJ...") vai também no Authorization; a nova
+    (sb_secret_...) não é JWT e vai só no apikey."""
+    cab = {"apikey": chave}
+    if chave.startswith("eyJ"):
+        cab["Authorization"] = f"Bearer {chave}"
+    return cab
+
+
 def _enviar(url, chave, linha):
     try:
         req = urllib.request.Request(
             f"{url.rstrip('/')}/rest/v1/{TABELA}", data=json.dumps(linha).encode(),
             method="POST",
-            headers={"apikey": chave, "Authorization": f"Bearer {chave}",
+            headers={**_cabecalhos(chave),
                      "Content-Type": "application/json", "Prefer": "return=minimal"})
         urllib.request.urlopen(req, timeout=10).close()
     except Exception:  # noqa: BLE001 - medição nunca derruba o app
@@ -206,7 +215,7 @@ def carregar(url=None, chave=None, dias=30):
                 f"{url.rstrip('/')}/rest/v1/{TABELA}?select=momento,sessao,evento,dados"
                 f"&momento=gte.{desde.isoformat(timespec='seconds').replace('+', '%2B')}"
                 f"&order=momento.asc",
-                headers={"apikey": chave, "Authorization": f"Bearer {chave}",
+                headers={**_cabecalhos(chave),
                          "Range-Unit": "items", "Range": f"{inicio}-{inicio + lote - 1}"})
             with urllib.request.urlopen(req, timeout=20) as r:
                 parte = json.loads(r.read())
