@@ -14,6 +14,7 @@ import importlib
 import secrets
 import sys
 import zipfile
+from collections import Counter
 
 import altair as alt
 import numpy as np
@@ -23,7 +24,7 @@ import streamlit as st
 # Depois de uma atualização, o Streamlit Cloud recarrega este arquivo mas pode
 # manter na memória a versão antiga de financeiro.py e regras.py, e o app quebra
 # com ImportError até alguém reiniciar. Recarregá-los aqui evita isso.
-for _modulo in ("financeiro", "leitores_pdf", "regras", "codigos", "plus", "relatorio", "exemplo"):   # nessa ordem
+for _modulo in ("financeiro", "leitores_pdf", "regras", "codigos", "plus", "relatorio", "exemplo", "uso"):   # nessa ordem
     if _modulo in sys.modules:
         importlib.reload(sys.modules[_modulo])
 
@@ -58,6 +59,7 @@ import exemplo
 import codigos
 import plus
 import relatorio
+import uso
 
 # ============================================================================
 # CONFIGURAÇÃO DO APP
@@ -958,6 +960,10 @@ LINK_CONSULTORIA = ler_segredo("CONTATO_CONSULTORIA")
 EMAIL_CONTATO = ler_segredo("CONTATO_EMAIL")
 PRECO_PLUS = ler_segredo("PLUS_PRECO")   # opcional, só para mostrar ("R$ 19,90 por mês")
 PRAZO_RESPOSTA = "Respondemos em até 1 dia útil."
+# Medição de uso (anônima): eventos vão para o Supabase; sem os segredos, só para a memória
+USO_URL = ler_segredo("SUPABASE_URL")
+USO_CHAVE = ler_segredo("SUPABASE_CHAVE")
+CLARITY_ID = ler_segredo("CLARITY_ID")   # opcional: gravação de sessão (texto mascarado)
 
 
 def _whatsapp_com_texto(link, texto):
@@ -1039,7 +1045,11 @@ def secao_ajuda():
         ("Meus dados ficam guardados?",
          "Não. Os extratos ficam só na memória enquanto o app está aberto e são apagados ao "
          "fechar. O que fica guardado são as classificações que você salvar (nome da empresa → "
-         "categoria), sem valores nem datas."),
+         "categoria), sem valores nem datas. Para melhorar o app, registramos de forma anônima "
+         "só o uso: páginas abertas, se o arquivo foi lido (formato e banco), erros de leitura e "
+         "quanto tempo a página ficou aberta. Nunca valores, descrições, nomes ou o arquivo."
+         + (" A navegação também pode ser gravada pelo Microsoft Clarity, com todo o texto da "
+            "tela escondido." if CLARITY_ID else "")),
         ("Uma categoria está errada.",
          "Em **📋 Transações** ficam os Pix para empresas que o app classificou pela Receita "
          "(CNPJ), para conferir e mudar. No Plus, a "
@@ -1078,6 +1088,9 @@ if st.session_state["plus"] and st.session_state.get("plus_ate") \
 # Administrador (entrou pelo ?admin=1 e voltou ao app): tem o Plus e as classificações dele
 # valem para todos os usuários
 ADMIN = bool(st.session_state.get("admin_ok"))
+# Medição de uso: as visitas do administrador (e a página ?admin=1) não contam
+USO = uso.Registro(st.session_state, USO_URL, USO_CHAVE,
+                   ativo=not ADMIN and st.query_params.get("admin") != "1")
 
 with st.sidebar:
     st.markdown('<p class="secao">⭐ Plus</p>', unsafe_allow_html=True)
@@ -1108,6 +1121,7 @@ with st.sidebar:
                          "Plus vale para os extratos dessa pessoa.")
                 if st.form_submit_button("Entrar"):
                     erro = entrar_no_plus(codigo, nome_plus)
+                    USO.anotar("plus", acao="código recusado" if erro else "entrou com código")
                     if erro:
                         st.error(erro)
                     else:
@@ -1115,6 +1129,7 @@ with st.sidebar:
                         st.rerun()
             if st.button("Quero o Plus" if not st.session_state.get("aviso_plus")
                          else "Renovar o Plus", key="assinar_lateral"):
+                USO.anotar("plus", acao="abriu a assinatura")
                 abrir_assinatura()
 PLUS = st.session_state["plus"] or ADMIN
 
@@ -1122,7 +1137,7 @@ PLUS = st.session_state["plus"] or ADMIN
 # ADMINISTRAÇÃO (endereço do app + ?admin=1): gerar códigos Plus
 # ============================================================================
 def pagina_admin():
-    st.subheader("🔧 Administração · Códigos Plus")
+    st.subheader("🔧 Administração")
     senha_certa = ler_segredo("ADMIN_SENHA") or ""
     if not senha_certa:
         st.info("Para usar esta página, crie o segredo ADMIN_SENHA (uma senha forte) em "
@@ -1145,6 +1160,90 @@ def pagina_admin():
     if c2.button("Sair da administração"):
         st.session_state["admin_ok"] = False
         st.rerun()
+    aba_uso, aba_codigos = st.tabs(["📈 Uso do app", "🔑 Códigos Plus"])
+    with aba_uso:
+        painel_de_uso()
+    with aba_codigos:
+        codigos_plus()
+
+
+def painel_de_uso():
+    """Medição anônima: até onde as visitas chegam, onde param e o que não foi lido."""
+    if not (USO_URL and USO_CHAVE):
+        st.info("Os eventos estão só na memória do servidor e somem quando ele reinicia. Para "
+                "guardar de vez, crie a tabela no Supabase e os segredos SUPABASE_URL e "
+                "SUPABASE_CHAVE (passo a passo no README).")
+    dias = st.segmented_control("Período", [1, 7, 30, 90], default=30, required=True,
+                                format_func=lambda d: "hoje" if d == 1 else f"{d} dias",
+                                key="uso_dias")
+    try:
+        ev = uso.carregar(USO_URL, USO_CHAVE, dias)
+    except Exception as e:  # noqa: BLE001
+        st.error(f"Não consegui ler os eventos do Supabase: {e}")
+        return
+    if ev.empty:
+        st.caption("Nenhuma visita registrada no período.")
+        return
+    sess = uso.resumo_sessoes(ev)
+    funil = uso.funil(sess)
+    pct = dict(zip(funil["Etapa"], funil["% das visitas"]))
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Visitas", len(sess))
+    c2.metric("Enviaram extrato", f"{pct['Enviou extrato']:.0f}%")
+    c3.metric("Viram o painel", f"{pct['Viu o painel']:.0f}%")
+    c4.metric("Tempo típico", f"{sess['minutos'].median():.0f} min",
+              help="Mediana do tempo com a página aberta (medido de 30 em 30 segundos). "
+                   "Visitas de menos de 30 segundos sem nenhum clique não entram na conta.")
+
+    st.markdown("#### Até onde as visitas chegam")
+    barras = alt.Chart(funil).mark_bar(color="#70ddff").encode(
+        x=alt.X("Visitas:Q", title=None, axis=alt.Axis(format="d", tickMinStep=1)),
+        y=alt.Y("Etapa:N", sort=None, title=None, axis=alt.Axis(labelLimit=220)),
+        tooltip=["Etapa", "Visitas", "% das visitas"])
+    rotulos = barras.mark_text(align="left", dx=4, color=cor_do_texto()).encode(
+        text="rotulo:N").transform_calculate(
+        rotulo="datum.Visitas + ' (' + format(datum['% das visitas'], '.0f') + '%)'")
+    st.altair_chart((barras + rotulos).properties(height=220), width="stretch")
+
+    st.markdown("#### Onde as pessoas pararam")
+    st.caption("O último lugar em que cada visita estava antes de fechar a página. Muita gente "
+               "parando no mesmo ponto é sinal de dificuldade ali.")
+    parou = (sess.groupby(["parou_em", "dispositivo"]).size().unstack(fill_value=0))
+    parou["Total"] = parou.sum(axis=1)
+    parou = parou.sort_values("Total", ascending=False)
+    parou["% das visitas"] = (100 * parou["Total"] / len(sess)).round(1)
+    st.dataframe(parou.rename_axis("Parou em"), width="stretch")
+
+    st.markdown("#### Leitura dos extratos")
+    c1, c2 = st.columns(2)
+    c1.caption("Arquivos enviados, por formato e banco")
+    c1.dataframe(uso.leituras(ev), hide_index=True, width="stretch")
+    c2.caption("O que não foi lido, e por quê")
+    c2.dataframe(uso.erros_de_leitura(ev), hide_index=True, width="stretch")
+
+    st.markdown("#### De onde vêm")
+    st.caption("Use links com ?utm_source=instagram (ou whatsapp, tiktok...) na divulgação para "
+               "saber qual canal traz mais visitas.")
+    viram = sess["etapa"].isin([n for n, _ in uso.ETAPAS[2:]])
+    origem = (sess.assign(viram=viram).groupby("origem")
+              .agg(Visitas=("sessao", "size"), **{"Viram o painel": ("viram", "sum")}))
+    st.dataframe(origem.sort_values("Visitas", ascending=False).rename_axis("Origem"),
+                 width="stretch")
+
+    st.markdown("#### Visitas recentes")
+    st.caption("Cada linha é uma visita (código aleatório, sem dados pessoais). O caminho mostra "
+               "os passos em ordem.")
+    recentes = sess.head(300).assign(
+        inicio=lambda d: d["inicio"].dt.tz_convert("America/Sao_Paulo").dt.strftime(
+            "%d/%m %H:%M"))
+    st.dataframe(recentes.drop(columns=["sessao", "fim"]).rename(columns={
+        "inicio": "Início", "minutos": "Minutos", "dispositivo": "Aparelho",
+        "origem": "Origem", "etapa": "Chegou até", "parou_em": "Parou em",
+        "erros": "Arquivos com erro", "caminho": "Caminho"}),
+        hide_index=True, width="stretch")
+
+
+def codigos_plus():
     if not CHAVE_PLUS:
         st.warning("Falta a chave que assina os códigos. Em Settings → Secrets, acrescente a "
                    "linha abaixo (gerada agora, aleatória) e salve. Não troque essa chave "
@@ -1206,6 +1305,40 @@ if st.query_params.get("admin") == "1":
     pagina_admin()
     st.stop()
 
+# Medição de uso: a visita começou (dispositivo e de onde veio o link, nada mais)
+USO.comecar(dispositivo="celular" if NO_CELULAR else "computador",
+            origem=uso.origem(st.query_params), plus=bool(PLUS))
+
+
+@st.fragment(run_every=uso.INTERVALO_ATIVO)
+def aviso_pagina_aberta():
+    """Roda sozinho a cada 30 segundos enquanto a página está aberta: quando os avisos param,
+    a pessoa fechou (é assim que se sabe quanto tempo ficou)."""
+    if st.session_state.get("uso_primeiro_aviso_feito"):
+        USO.ainda_aberta()
+    st.session_state["uso_primeiro_aviso_feito"] = True
+
+
+if USO.ligado:
+    aviso_pagina_aberta()
+    if CLARITY_ID:
+        # Gravação de sessão do Microsoft Clarity com TODO o texto mascarado
+        # (data-clarity-mask na página inteira): valores e nomes do extrato não são gravados
+        st.html(f"""<script>
+(() => {{
+  const d = window.parent && window.parent.document || document;
+  if (d.getElementById("clarity-tag")) return;
+  d.documentElement.setAttribute("data-clarity-mask", "True");
+  d.body.setAttribute("data-clarity-mask", "True");
+  const w = d.defaultView;
+  w.clarity = w.clarity || function () {{ (w.clarity.q = w.clarity.q || []).push(arguments); }};
+  const s = d.createElement("script");
+  s.id = "clarity-tag"; s.async = true;
+  s.src = "https://www.clarity.ms/tag/" + {json.dumps(CLARITY_ID)};
+  d.head.appendChild(s);
+}})();
+</script>""", unsafe_allow_javascript=True)
+
 # ============================================================================
 # PROCESSAMENTO
 # ============================================================================
@@ -1213,7 +1346,9 @@ def rodape():
     st.markdown(
         '<div class="rodape">🔒 <b>Privacidade</b> · Seus extratos não são armazenados: '
         'ficam só na memória enquanto o app está aberto.<br>Ao fechar o app, todas as '
-        'informações são apagadas — é isso que garante a sua privacidade.</div>',
+        'informações são apagadas — é isso que garante a sua privacidade.<br>Para melhorar o '
+        'app, registramos de forma anônima só o uso (páginas abertas, erros de leitura, tempo '
+        'de uso), nunca valores, descrições ou nomes.</div>',
         unsafe_allow_html=True)
 
 
@@ -1234,6 +1369,7 @@ def botoes_flutuantes():
         # os extratos enviados), fixado no canto pelo CSS de .st-key-assinar_flutuante
         with st.container(key="assinar_flutuante"):
             if st.button("⭐ Assinar área Plus", key="assinar_canto"):
+                USO.anotar("plus", acao="abriu a assinatura")
                 abrir_assinatura()
         if not LINK_CONSULTORIA:
             st.markdown("<style>.st-key-assinar_flutuante {bottom: 1.2rem !important;}</style>",
@@ -1285,6 +1421,12 @@ with corpo:
         with st.expander("❓ Dúvidas frequentes e contato"):
             secao_ajuda()
         st.stop()
+
+    # Medição: quantos arquivos e de que formatos (nunca o nome dos arquivos)
+    USO.mudou("arquivos", tuple(sorted((a.name, a.size if hasattr(a, "size") else 0)
+                                       for a in arquivos)),
+              "enviou", arquivos=len(arquivos),
+              formatos=dict(Counter(uso.formato_do_arquivo(a.name) for a in arquivos)))
 
     # Logo abaixo do título: a faixa verde e o aviso dos arquivos não importados; depois, os
     # filtros, junto dos gráficos. Preenchidos depois de ler os extratos
@@ -1343,6 +1485,7 @@ with corpo:
             return carregar_arquivo(nome, conteudo)
 
     for arquivo in arquivos:
+        conteudo, id_arquivo = b"", arquivo.name   # para a medição, se a leitura falhar cedo
         try:
             conteudo = arquivo.getvalue()
             id_arquivo = impressao(arquivo.name, conteudo)
@@ -1352,10 +1495,22 @@ with corpo:
             ids_lidos.append(id_arquivo)
         except SemLancamentos as e:
             leitura.append({"Arquivo": arquivo.name, "Conta": e.conta, "Situação": f"➖ {e}"})
+            USO.uma_vez(f"arquivo_{id_arquivo}", "arquivo",
+                        formato=uso.formato_do_arquivo(arquivo.name, conteudo),
+                        banco=uso.banco_da_conta(e.conta), ok=False, erro="sem lançamentos")
             continue
         except Exception as e:
             leitura.append({"Arquivo": arquivo.name, "Conta": "—", "Situação": f"⚠️ ignorado: {e}"})
+            USO.uma_vez(f"arquivo_{id_arquivo}", "arquivo",
+                        formato=uso.formato_do_arquivo(arquivo.name, conteudo),
+                        banco=uso.banco_da_conta(arquivo.name), ok=False,
+                        erro=uso.tipo_do_erro(e))
             continue
+        if r["tipo"] == "transacoes":
+            USO.uma_vez(f"arquivo_{id_arquivo}", "arquivo",
+                        formato=uso.formato_do_arquivo(arquivo.name, conteudo),
+                        banco=uso.banco_da_conta(r["conta"]), ok=True,
+                        lancamentos=len(r["dados"]), ocr=bool(r.get("ocr")))
         r["nome"] = arquivo.name
         pj_detectado = pj_detectado or bool(r.get("pj"))
         if r.get("titular"):
@@ -1392,6 +1547,11 @@ with corpo:
             except ValueError:
                 completo = False
         grupos.append((cols, grupo, sugestao, completo))
+        for r in grupo:
+            USO.uma_vez(f"arquivo_{r['id']}", "arquivo",
+                        formato=uso.formato_do_arquivo(r["nome"]),
+                        banco=uso.banco_da_conta(r["conta"]), ok=completo,
+                        **({} if completo else {"erro": "colunas não reconhecidas sozinhas"}))
     nao_lidos = [x for x in leitura if x["Situação"].startswith("⚠️")]
     a_ajustar = [g for g in grupos if not g[3]]
     qtd_aviso = len(nao_lidos) + sum(len(g[1]) for g in a_ajustar)
@@ -1465,6 +1625,9 @@ with corpo:
             try:
                 t = montar(r, colunas)
                 tabelas.append(t)
+                if not completo:
+                    USO.uma_vez(f"colunas_{r['id']}", "colunas_ajustadas",
+                                formato=uso.formato_do_arquivo(r["nome"]))
                 leitura.append({"Arquivo": r["nome"], "Conta": r["conta"],
                                 "Situação": f"✅ {len(t)} lançamentos"})
             except ValueError as e:
@@ -1545,10 +1708,14 @@ with corpo:
         st.toast(st.session_state.pop("aviso_cnpj"))
 
     if todos.empty:
+        USO.uma_vez(f"vazio_{chave_todos}", "sem_transacoes")
         st.warning("Nenhuma transação encontrada. Confira os arquivos e as colunas em "
                    "⚠️ Ver detalhes.")
         st.dataframe(pd.DataFrame(leitura), hide_index=True, width="stretch")
         st.stop()
+
+    USO.uma_vez("painel", "painel", transacoes=len(todos), contas=todos["Conta"].nunique(),
+                meses=todos["Data"].dt.to_period("M").nunique())
 
     # Menu lateral: as páginas da área aberta ou do Plus
     PAINEL = "📊 Painel"
@@ -1568,6 +1735,7 @@ with corpo:
             pagina = st.radio("Navegação", PAGINAS, label_visibility="collapsed",
                               key="pagina_plus" if PLUS else "pagina_livre",
                               persist_state="page", width="stretch")
+    USO.mudou("pagina", pagina, "pagina", nome=pagina)
 
     # As regras guardam "CASA"; só a tela mostra "SEDE" no modo empresa
     def exibir_cat(categoria):
@@ -1610,6 +1778,7 @@ with corpo:
                                                  default="Resumo", required=True,
                                                  label_visibility="collapsed", key="visao",
                                                  persist_state="page")
+                USO.mudou("visao", visao, "visao", nome=visao)
             else:
                 st.markdown(f'<p class="titulo-pagina">{escape(pagina)}</p>',
                             unsafe_allow_html=True, width="content")
@@ -1908,7 +2077,8 @@ with corpo:
         # CSV no padrão do Excel brasileiro: ponto e vírgula e vírgula decimal
         exportar = exportar.drop(columns=["DataCompra", "FornecedorOriginal"], errors="ignore")
         csv = exportar.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig")
-        st.download_button("📥 Download CSV", csv, f"extrato_{hoje}.csv", "text/csv")
+        st.download_button("📥 Download CSV", csv, f"extrato_{hoje}.csv", "text/csv",
+                           on_click=lambda: USO.anotar("exportou", tipo="CSV"))
 
         xlsx = io.BytesIO()
         with pd.ExcelWriter(xlsx, engine="openpyxl") as planilha:
@@ -1917,7 +2087,8 @@ with corpo:
             resumo_mensal(df).to_excel(planilha, sheet_name="Mês a mês", index=False)
         st.download_button(
             "📥 Download XLSX", xlsx.getvalue(), f"extrato_{hoje}.xlsx",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            on_click=lambda: USO.anotar("exportou", tipo="XLSX")
         )
 
 
@@ -2092,13 +2263,15 @@ with corpo:
             """)
             st.download_button("📄 Ver um relatório de exemplo (PDF, dados fictícios)",
                                relatorio_de_exemplo(), "Relatorio_Contas_em_Dia_exemplo.pdf",
-                               "application/pdf")
+                               "application/pdf",
+                               on_click=lambda: USO.anotar("plus", acao="baixou o exemplo"))
             st.markdown("**Como ter acesso:** faça o pagamento em *⭐ Assinar área Plus* e "
                         "receba seu código. Depois, no menu lateral, abra *⭐ Tenho um código "
                         "Plus*, cole o código e digite seu nome completo. O código vale para os "
                         "extratos do titular, até a data de validade.")
             b1, b2 = st.columns(2)
             if b1.button("⭐ Quero o Plus", type="primary", key="assinar_vitrine"):
+                USO.anotar("plus", acao="abriu a assinatura")
                 abrir_assinatura()
             if LINK_CONSULTORIA:
                 b2.link_button("💬 Falar com um especialista", LINK_CONSULTORIA)
@@ -2125,6 +2298,7 @@ with corpo:
                    "de emergência usa o valor informado na página ⭐ Saúde financeira.")
         def pdf_do_relatorio(t=df, guardado=st.session_state.get("guardado") or None):
             # Só roda no clique: o PDF é montado na hora e entregue para download
+            USO.anotar("exportou", tipo="relatório PDF")
             return relatorio.gerar_pdf(relatorio.montar_relatorio(t, guardado=guardado))
 
         st.download_button("📥 Baixar relatório (PDF)", pdf_do_relatorio,
@@ -2192,7 +2366,8 @@ with corpo:
                 rend_pf.to_excel(planilha, sheet_name="Recebidos de pessoas", index=False)
             st.download_button("📥 Baixar para o contador (XLSX)", planilha_ir.getvalue(),
                                f"imposto_de_renda_{ano}.xlsx",
-                               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                               on_click=lambda: USO.anotar("exportou", tipo="IR (XLSX)"))
 
     # ----------------------------------------------------------------------------
     if pagina == "⭐ Fixos e parcelas":
