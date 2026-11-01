@@ -935,3 +935,15 @@ def test_sispag_acha_o_extrato_com_outro_nome_de_conta():
     t = consolidar([extrato, ler_sispag(_relatorio_sispag())])
     assert sorted(t["Valor"]) == [-4000.00, -2300.00]          # o 05/01 não tem par: sai
     assert set(t["Conta"]) == {"ITAU - EXTRATO - 01"}         # o detalhe vai para a conta do extrato
+
+
+@pytest.mark.parametrize("descricao,valor,categoria", [
+    ("Aplic.invest Facil", -1000.0, "APLICAÇÃO/RESGATE"),     # Bradesco
+    ("RESG.INVEST FACIL", 500.0, "APLICAÇÃO/RESGATE"),
+    ("Apl Aplic Aut Mais", -1.0, "APLICAÇÃO/RESGATE"),        # Itaú
+    ("Res Aplic Aut Mais", 9706.70, "APLICAÇÃO/RESGATE"),
+    ("Rend Pago Aplic Aut Mais", 0.05, "RECEITA"),             # rendimento é dinheiro novo
+    ("APLICATIVO DO CONSULTOR", -50.0, "SERVIÇOS DE TERCEIROS"),   # "aplicativo" não é aplicação
+])
+def test_aplicacao_automatica_itau_e_bradesco(descricao, valor, categoria):
+    assert categorizar(descricao, valor) == categoria
