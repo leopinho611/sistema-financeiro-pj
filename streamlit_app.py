@@ -1481,7 +1481,7 @@ with corpo:
     def ler_com_aviso(nome, conteudo):
         # Só aparece na primeira leitura (depois vem da memória da sessão). O PDF em imagem
         # passa pelo OCR, que leva de segundos a alguns minutos conforme o servidor
-        with st.spinner(f"Lendo {nome}… (PDF em imagem pode levar até alguns minutos)"):
+        with st.spinner(f"Lendo {nome} (arquivos PDF com OCR demoram mais que o normal)"):
             return carregar_arquivo(nome, conteudo)
 
     for arquivo in arquivos:
@@ -1493,13 +1493,17 @@ with corpo:
                           lambda: ler_com_aviso(arquivo.name, conteudo), guardar=400)
             r["id"] = id_arquivo
             ids_lidos.append(id_arquivo)
-        except SemLancamentos as e:
-            leitura.append({"Arquivo": arquivo.name, "Conta": e.conta, "Situação": f"➖ {e}"})
-            USO.uma_vez(f"arquivo_{id_arquivo}", "arquivo",
-                        formato=uso.formato_do_arquivo(arquivo.name, conteudo),
-                        banco=uso.banco_da_conta(e.conta), ok=False, erro="sem lançamentos")
-            continue
         except Exception as e:
+            # Sem lançamentos não é erro. Compara pelo nome: o leitores_pdf é recarregado a cada
+            # rodada, e o aviso guardado na memória da sessão é da classe da rodada anterior
+            if isinstance(e, SemLancamentos) or type(e).__name__ == "SemLancamentos":
+                leitura.append({"Arquivo": arquivo.name, "Conta": e.conta,
+                                "Situação": f"➖ {e}"})
+                USO.uma_vez(f"arquivo_{id_arquivo}", "arquivo",
+                            formato=uso.formato_do_arquivo(arquivo.name, conteudo),
+                            banco=uso.banco_da_conta(e.conta), ok=False,
+                            erro="sem lançamentos")
+                continue
             leitura.append({"Arquivo": arquivo.name, "Conta": "—", "Situação": f"⚠️ ignorado: {e}"})
             USO.uma_vez(f"arquivo_{id_arquivo}", "arquivo",
                         formato=uso.formato_do_arquivo(arquivo.name, conteudo),

@@ -1259,29 +1259,41 @@ FORMATOS_PLANILHA = {"csv", "xlsx", "xls", "excel", "txt", "tsv"}
 MAX_PAGINAS_OCR = 20
 
 
-def texto_por_ocr(conteudo):
+DPI_OCR = 250   # 300 dá o mesmo resultado no BNB e é ~20% mais lento; preto e branco perde linhas
+
+
+def texto_por_ocr(conteudo, primeira_conhecida=None):
     """Texto de um PDF sem texto, pelo OCR (tesseract, em português). Precisa dos programas
     pdftoppm e tesseract no servidor (packages.txt/Dockerfile); sem eles, devolve None.
-    Num núcleo inteiro, 3 páginas levam ~16 s; num servidor fraco (fração de núcleo), alguns
-    minutos: por isso o tempo limite é largo."""
+
+    primeira_conhecida(texto): se a 1ª página não é de um layout conhecido, para ali (não
+    adianta ler o resto). Num núcleo inteiro o BNB de 3 páginas leva ~12 s; num servidor
+    fraco (fração de núcleo), bem mais: por isso o tempo limite é largo."""
     if not (shutil.which("pdftoppm") and shutil.which("tesseract")):
         return None
+    # Um núcleo por página: em servidor com fração de núcleo, mais threads só disputam a CPU
+    ambiente = {**os.environ, "OMP_THREAD_LIMIT": "1"}
     with tempfile.TemporaryDirectory() as pasta:
         pdf = os.path.join(pasta, "extrato.pdf")
         with open(pdf, "wb") as f:
             f.write(conteudo)
         try:
-            subprocess.run(["pdftoppm", "-r", "300", "-gray", "-png", "-l",
+            subprocess.run(["pdftoppm", "-r", str(DPI_OCR), "-gray", "-png", "-l",
                             str(MAX_PAGINAS_OCR), pdf, os.path.join(pasta, "p")],
                            check=True, capture_output=True, timeout=300)
             paginas = sorted(f for f in os.listdir(pasta) if f.endswith(".png"))
-            textos = [subprocess.run(["tesseract", os.path.join(pasta, p), "-", "-l", "por",
-                                      "--psm", "6"], check=True, capture_output=True,
-                                     timeout=300).stdout.decode("utf-8", "ignore")
-                      for p in paginas]
+            textos = []
+            for n, pagina in enumerate(paginas):
+                textos.append(subprocess.run(
+                    ["tesseract", os.path.join(pasta, pagina), "-", "-l", "por", "--psm", "6"],
+                    check=True, capture_output=True, timeout=300, env=ambiente,
+                ).stdout.decode("utf-8", "ignore"))
+                if n == 0 and primeira_conhecida and not primeira_conhecida(textos[0]):
+                    return None
         except (subprocess.SubprocessError, OSError):
             return None
     return "\n".join(textos)
+
 
 # Sinais de que o extrato é de empresa (PJ), procurados no cabeçalho do PDF: o tipo de conta
 # ou cartão ("Empresarial"), ou o titular com nome de empresa ("... LTDA", "Associação ...").
@@ -1438,8 +1450,8 @@ def carregar_arquivo(nome, conteudo):
                                    "conta": " + ".join(dados["Conta"].unique())})
         if len(texto.strip()) < 20:
             # Sem texto (escaneado, ou impresso com as letras viradas desenho): tenta o OCR
-            from leitores_pdf import ler_texto_ocr
-            texto_ocr = texto_por_ocr(conteudo)
+            from leitores_pdf import layout_ocr_conhecido, ler_texto_ocr
+            texto_ocr = texto_por_ocr(conteudo, primeira_conhecida=layout_ocr_conhecido)
             dados = ler_texto_ocr(texto_ocr) if texto_ocr else None
             if dados is not None:
                 return _com_pj(texto_ocr, {"tipo": "transacoes", "dados": dados, "ocr": True,
