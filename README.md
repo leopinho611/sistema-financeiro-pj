@@ -192,6 +192,19 @@ todo o texto aparece escondido na gravação; deixe também **Settings → Maski
 Clarity. Com o Clarity ligado, a pergunta "Meus dados ficam guardados?" da ajuda passa a citar
 a gravação.
 
+🔎 Google e prévia de links
+O Streamlit entrega sempre o mesmo `index.html`, com título "Streamlit" e o corpo vazio (a
+tela vem depois, pelo JavaScript). No build do Docker, `site/aplicar.py` troca nesse arquivo o
+título, a descrição, as tags de prévia (WhatsApp, Instagram, LinkedIn) e coloca um texto sobre
+o app no lugar do corpo vazio, que o próprio app substitui ao abrir. Também publica
+`robots.txt`, `sitemap.xml` e `previa.png` (a imagem da prévia) na raiz do endereço. Para mudar
+os textos, edite `site/cabecalho.html` e `site/conteudo.html`.
+
+Depois de publicar, no [Google Search Console](https://search.google.com/search-console):
+adicione a propriedade **Domínio** `suascontasemdia.com.br`, confirme com o registro TXT no
+Registro.br, envie o sitemap (`https://suascontasemdia.com.br/sitemap.xml`) e, em **Inspeção
+de URL**, peça a indexação da página inicial.
+
 🎯 Roadmap (Próximas Semanas)
 [ ] Integração com Google Drive API (importar extratos automaticamente)
 [ ] SQLite para histórico de transações

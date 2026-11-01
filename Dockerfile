@@ -11,5 +11,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
+# Título, descrição, prévia de link e texto para o Google no index.html do Streamlit, e
+# robots.txt, sitemap.xml e previa.png na raiz do endereço
+RUN python site/aplicar.py
 
 CMD ["sh", "iniciar.sh"]
