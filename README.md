@@ -144,6 +144,53 @@ Exportar dados categorizados
 - **Área Plus:** os relatórios são calculados na hora, a partir dos extratos abertos. O valor
   "quanto você tem guardado" não é salvo.
 - O app não usa inteligência artificial nem envia extratos a terceiros.
+- **Medição de uso (anônima):** cada visita recebe um código aleatório e o app anota só o uso:
+  aparelho (celular/computador), de onde veio o link (`?utm_source=`), páginas e abas abertas,
+  formato e banco de cada arquivo e se foi lido (ou o tipo do erro), exportações, cliques no
+  Plus e um aviso a cada 30 segundos enquanto a página está aberta. **Nunca** valores, descrições,
+  fornecedores, nome do titular, nome do arquivo ou IP. Veja "📈 Medição de uso" abaixo.
+📈 Medição de uso
+Abra o app com `?admin=1`, entre com a senha e veja a aba **📈 Uso do app**: quantas visitas,
+até onde chegam (entrou → enviou extrato → viu o painel → abriu outra aba → exportou ou foi
+ao Plus), **onde pararam** (a última página ou aba antes de fechar), quais formatos e bancos
+deram erro de leitura, de onde vieram as visitas e o caminho de cada visita. O tempo de uso
+vem de um aviso a cada 30 segundos enquanto a página está aberta: quando os avisos param, a pessoa
+fechou. Visitas de menos de 30 segundos sem nenhum clique não contam (assim a recarga
+automática do tema, na primeira visita, não vira uma visita a mais). As suas visitas como
+administrador não contam.
+
+Sem configuração, os eventos ficam na memória do servidor e somem quando ele reinicia (no
+Render, a cada atualização). Para guardar de vez, use o Supabase (gratuito):
+1. Crie um projeto em https://supabase.com → **SQL Editor** → rode:
+```sql
+create table eventos (
+  id bigint generated always as identity primary key,
+  momento timestamptz not null default now(),
+  sessao text not null,
+  evento text not null,
+  dados jsonb not null default '{}'
+);
+create index eventos_momento on eventos (momento);
+alter table eventos enable row level security;   -- sem políticas: só a chave do servidor acessa
+```
+2. **Project Settings → API**: copie a *Project URL* e a chave **service_role** (secreta: fica
+   só nos segredos do servidor, nunca no navegador).
+3. Nos segredos do app (Render → Secret Files `secrets.toml`, ou Streamlit Cloud → Secrets):
+```
+SUPABASE_URL = "https://xxxx.supabase.co"
+SUPABASE_CHAVE = "eyJ..."     # service_role
+CLARITY_ID = ""               # opcional, veja abaixo
+```
+Nos links de divulgação, acrescente a origem: `https://suascontasemdia.com.br/?utm_source=instagram`
+(ou `whatsapp`, `tiktok`, `linkedin`...). Ela aparece em "De onde vêm".
+
+**Gravação de sessão (opcional):** com `CLARITY_ID` (o código do projeto em
+https://clarity.microsoft.com), o Microsoft Clarity grava a navegação (cliques, rolagem,
+cliques repetidos de frustração). O app marca a página inteira com `data-clarity-mask`, então
+todo o texto aparece escondido na gravação; deixe também **Settings → Masking → Strict** no
+Clarity. Com o Clarity ligado, a pergunta "Meus dados ficam guardados?" da ajuda passa a citar
+a gravação.
+
 🎯 Roadmap (Próximas Semanas)
 [ ] Integração com Google Drive API (importar extratos automaticamente)
 [ ] SQLite para histórico de transações
