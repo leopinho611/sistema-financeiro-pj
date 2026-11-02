@@ -13,6 +13,7 @@ from leitores_pdf import (
     ler_extrato_bradesco,
     ler_extrato_itau,
     ler_extrato_santander,
+    ler_extrato_santander_pj,
     ler_fatura_bradesco,
     ler_fatura_itau,
     ler_fatura_sicoob,
@@ -444,3 +445,48 @@ def test_layout_ocr_conhecido_pela_primeira_pagina():
     assert layout_ocr_conhecido(EXTRATO_BNB_OCR)
     # PDF em imagem de outro formato: o OCR para na 1ª página
     assert not layout_ocr_conhecido("RECIBO DE PAGAMENTO\nValor R$ 100,00")
+
+
+# Santander "Extrato_PJ_A4_Basico" (texto em layout), com dados fictícios: o débito tem "-"
+# no fim do valor e o nome de quem recebeu o Pix vem na linha de baixo
+SANTANDER_PJ = """\
+Extrato_PJ_A4_Basico  - 2/4/2024
+                                                       Pagina: 2/13
+Resumo - julho/2025
+Nome                                Agência         Conta Corrente
+EMPRESA EXEMPLO LTDA                1234            13.000111-2
+Conta Corrente
+Movimentação
+Data         Descrição                          Nº Documento      Movimentos (R$)        Saldo (R$)
+                                                                   Créditos   Débitos
+               SALDO EM 30/06                                                            0,00
+01/07        TARIFA AVULSA ENVIO PIX               -                         12,50-
+                PIX RECEBIDO 12345678000190        -               1.000,00
+                PIX ENVIADO                        333627                    300,00-
+               FULANO DE TAL EXEMPLO
+                APLICACAO CONTAMAX                 -                         687,50-      0,00
+Extrato_PJ_A4_Basico  - 2/4/2024
+                                                       Pagina: 3/13
+                                                    EXTRATO CONSOLIDADO
+                                                         julho/2025
+Data         Descrição                          Nº Documento      Movimentos (R$)        Saldo (R$)
+02/07        PIX ENVIADO COMJOL                    -                         100,00-
+                RESGATE CONTAMAX AUTOMATICO        -                 100,00              0,00
+               SALDO EM 31/07                                                            0,00
+Saldos por Período
+01  0,00  0,00  0,00
+"""
+
+
+def test_extrato_santander_pj_basico():
+    from leitores_pdf import eh_extrato_santander, eh_extrato_santander_pj
+    assert eh_extrato_santander_pj(SANTANDER_PJ) and not eh_extrato_santander(SANTANDER_PJ)
+    t = ler_extrato_santander_pj(SANTANDER_PJ)
+    assert t["Conta"].iat[0] == "Santander Ag 1234 Cc 13.000111-2"
+    assert len(t) == 6
+    assert round(t["Valor"].sum(), 2) == 0.00                      # saldo final - inicial
+    por = t.set_index("Descrição")
+    assert por.loc["PIX ENVIADO - FULANO DE TAL EXEMPLO", "Valor"] == -300.00   # nome de baixo
+    assert por.loc["PIX RECEBIDO 12345678000190", "Valor"] == 1000.00
+    assert por.loc["PIX ENVIADO COMJOL", "Data"] == pd.Timestamp("2025-07-02")
+    assert por.loc["RESGATE CONTAMAX AUTOMATICO", "Valor"] == 100.00

@@ -661,6 +661,59 @@ def ler_texto_ocr(texto):
 
 
 # ============================================================================
+# SANTANDER - extrato consolidado PJ básico ("Extrato_PJ_A4_Basico", texto em layout)
+# ============================================================================
+# Cada lançamento numa linha: "dd/mm" (só no primeiro do dia), descrição, nº do documento
+# ("-" quando não há), valor com "-" no fim se for débito e, às vezes, o saldo. O nome de
+# quem recebeu o Pix vem na linha de baixo. A movimentação vai do "SALDO EM dd/mm" inicial
+# ao final
+_LINHA_SANTANDER_PJ = re.compile(r"^(?:(\d{2})/(\d{2})\s+)?(.+?)\s+(?:-|\d+)\s+"
+                                 r"([\d.]+,\d{2})(-?)(?:\s+[\d.]+,\d{2}-?)?$")
+_CABECALHO_SANTANDER_PJ = ("Data ", "Créditos", "Extrato_PJ", "BALP_", "Pagina:",
+                           "EXTRATO CONSOLIDADO")
+
+
+def eh_extrato_santander_pj(texto):
+    return "Extrato_PJ_A4_Basico" in texto and "Movimentação" in texto
+
+
+def ler_extrato_santander_pj(texto):
+    m = re.search(r"(janeiro|fevereiro|março|abril|maio|junho|julho|agosto|setembro|outubro|"
+                  r"novembro|dezembro)/(\d{4})", texto)
+    if not m:
+        raise ValueError("extrato Santander sem o mês.")
+    mes_ref, ano_ref = _MESES[normalizar(m.group(1))[:3]], int(m.group(2))
+    # No texto em layout a agência e a conta ficam lado a lado: "4543  13.009258-8"
+    c = re.search(r"\b(\d{4})\s+(\d{2}\.\d{6}-\d)\b", texto)
+    conta = f"Santander Ag {c.group(1)} Cc {c.group(2)}" if c else "Santander"
+    inicio = re.search(r"SALDO EM \d{2}/\d{2}", texto)
+    if not inicio:
+        raise ValueError("extrato Santander sem a movimentação.")
+    lancamentos, dia, ultimo = [], None, None
+    for linha in texto[inicio.end():].splitlines():
+        linha = _limpa(linha)
+        if linha.startswith("SALDO EM"):          # saldo final: acabou a conta corrente
+            break
+        if not linha or linha.startswith(_CABECALHO_SANTANDER_PJ) \
+                or re.fullmatch(r"\w+/\d{4}", linha):
+            ultimo = None
+            continue
+        lin = _LINHA_SANTANDER_PJ.match(linha)
+        if lin:
+            if lin.group(1):
+                dia = (lin.group(1), lin.group(2))
+            if dia is None:
+                continue
+            valor = converter_valor(lin.group(4))
+            ultimo = {"Data": _data(dia[0], dia[1], ano_ref, mes_ref),
+                      "Descrição": lin.group(3), "Valor": -valor if lin.group(5) else valor}
+            lancamentos.append(ultimo)
+        elif ultimo is not None and not re.search(r"\d,\d{2}", linha):
+            ultimo["Descrição"] += f" - {linha}"     # quem recebeu ou pagou
+    return _tabela(lancamentos, conta)
+
+
+# ============================================================================
 # SANTANDER - extrato consolidado inteligente (PJ)
 # ============================================================================
 _LINHA_SANTANDER = re.compile(rf"^\s*(?:(\d{{2}})/(\d{{2}})\s+)?(.+?)\s+-?\s*({VALOR})"
@@ -794,6 +847,7 @@ LEITORES = [
     (eh_extrato_sicoob, ler_extrato_sicoob, False),
     (eh_extrato_caixa, ler_extrato_caixa, False),
     (eh_extrato_santander, ler_extrato_santander, True),
+    (eh_extrato_santander_pj, ler_extrato_santander_pj, True),
 ]
 
 
